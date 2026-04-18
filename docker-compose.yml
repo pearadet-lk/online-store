@@ -1,0 +1,127 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: onlinestore
+      POSTGRES_PASSWORD: onlinestore
+      POSTGRES_DB: onlinestore
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onlinestore -d onlinestore"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ./database/aurora-postgres-schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+
+  gateway:
+    build:
+      context: .
+      dockerfile: src/Services/Gateway/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      Services__OrderServiceBaseUrl: http://order-service:8080
+      Services__PaymentServiceBaseUrl: http://payment-service:8080
+      Services__ProductServiceBaseUrl: http://product-service:8080
+      Services__CartServiceBaseUrl: http://cart-service:8080
+      Services__UserServiceBaseUrl: http://user-service:8080
+      Services__InventoryServiceBaseUrl: http://inventory-service:8080
+      Services__ShippingServiceBaseUrl: http://shipping-service:8080
+      Services__HistoryServiceBaseUrl: http://history-service:8080
+    ports:
+      - "8081:8080"
+    depends_on:
+      product-service:
+        condition: service_started
+      cart-service:
+        condition: service_started
+      order-service:
+        condition: service_started
+      payment-service:
+        condition: service_started
+      user-service:
+        condition: service_started
+      inventory-service:
+        condition: service_started
+      shipping-service:
+        condition: service_started
+      history-service:
+        condition: service_started
+
+  product-service:
+    build:
+      context: .
+      dockerfile: src/Services/ProductService/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__Catalog: Host=postgres;Port=5432;Database=onlinestore;Username=onlinestore;Password=onlinestore
+    ports:
+      - "8084:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  cart-service:
+    build:
+      context: .
+      dockerfile: src/Services/CartService/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+    ports:
+      - "8085:8080"
+
+  order-service:
+    build:
+      context: .
+      dockerfile: src/Services/OrderService/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+    ports:
+      - "8082:8080"
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: src/Services/PaymentService/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      Stripe__SecretKey: ${STRIPE_SECRET_KEY:-}
+    ports:
+      - "8083:8080"
+
+  user-service:
+    build:
+      context: .
+      dockerfile: src/Services/UserService/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+    ports:
+      - "8086:8080"
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: src/Services/InventoryService/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+    ports:
+      - "8087:8080"
+
+  shipping-service:
+    build:
+      context: .
+      dockerfile: src/Services/ShippingService/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+    ports:
+      - "8088:8080"
+
+  history-service:
+    build:
+      context: .
+      dockerfile: src/Services/HistoryService/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+    ports:
+      - "8089:8080"

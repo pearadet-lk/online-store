@@ -1,0 +1,133 @@
+name: ci-cd
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Restore
+        run: dotnet restore OnlineStore.sln
+
+      - name: Build
+        run: dotnet build OnlineStore.sln --configuration Release --no-restore
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build gateway image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Services/Gateway/Dockerfile
+          push: false
+          tags: online-store/gateway:${{ github.sha }}
+
+      - name: Build order image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Services/OrderService/Dockerfile
+          push: false
+          tags: online-store/order-service:${{ github.sha }}
+
+      - name: Build payment image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Services/PaymentService/Dockerfile
+          push: false
+          tags: online-store/payment-service:${{ github.sha }}
+
+      - name: Build product image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Services/ProductService/Dockerfile
+          push: false
+          tags: online-store/product-service:${{ github.sha }}
+
+      - name: Build cart image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Services/CartService/Dockerfile
+          push: false
+          tags: online-store/cart-service:${{ github.sha }}
+
+      - name: Build user image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Services/UserService/Dockerfile
+          push: false
+          tags: online-store/user-service:${{ github.sha }}
+
+      - name: Build inventory image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Services/InventoryService/Dockerfile
+          push: false
+          tags: online-store/inventory-service:${{ github.sha }}
+
+      - name: Build shipping image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Services/ShippingService/Dockerfile
+          push: false
+          tags: online-store/shipping-service:${{ github.sha }}
+
+      - name: Build history image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/Services/HistoryService/Dockerfile
+          push: false
+          tags: online-store/history-service:${{ github.sha }}
+
+  # Starter baseline for blue/green on ECS CodeDeploy.
+  # Replace placeholders with your AWS account details and infra names.
+  deploy-blue-green:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: docker-build
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Placeholder deploy step
+        run: |
+          echo "Implement ECR push + ECS/CodeDeploy blue-green deployment here."
+          echo "Use taskdef and appspec artifacts for traffic shifting and rollback."
