@@ -79,6 +79,20 @@ Ports:
 - Inventory Service: `http://localhost:8087`
 - Shipping Service: `http://localhost:8088`
 - History Service: `http://localhost:8089`
+- Jaeger UI: `http://localhost:16686`
+- Prometheus: `http://localhost:9090`
+- Grafana: `http://localhost:3000` (admin/admin)
+- Elasticsearch: `http://localhost:9200`
+- Kibana: `http://localhost:5601`
+
+## Observability stack
+
+All services now expose:
+
+- distributed traces via OpenTelemetry exported to Jaeger (through OTLP)
+- HTTP metrics at `/metrics` for Prometheus
+- structured Serilog logs with trace IDs, shipped to Elasticsearch
+- response `X-Trace-Id` header for quick request correlation
 
 ## Local run (Minikube)
 

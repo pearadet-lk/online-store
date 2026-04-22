@@ -1,22 +1,50 @@
 using System.Net;
+using System.Diagnostics;
 using System.Text;
 using System.Threading.RateLimiting;
 using Contracts;
 using Microsoft.AspNetCore.RateLimiting;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Polly;
 using Polly.Extensions.Http;
+using Prometheus;
 using Serilog;
+using Serilog.Context;
+using Serilog.Sinks.Elasticsearch;
 
-Log.Logger = new LoggerConfiguration()
-    .Enrich.FromLogContext()
-    .WriteTo.Console()
-    .CreateLogger();
+const string ServiceName = "gateway";
 
 try
 {
     var builder = WebApplication.CreateBuilder(args);
-    builder.Host.UseSerilog();
+    builder.Host.UseSerilog((context, _, loggerConfiguration) =>
+    {
+        var elasticsearchUrl = context.Configuration["Observability:ElasticsearchUrl"] ?? "http://elasticsearch:9200";
+        loggerConfiguration
+            .ReadFrom.Configuration(context.Configuration)
+            .Enrich.FromLogContext()
+            .Enrich.WithProperty("Service", ServiceName)
+            .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] [{Service}] [TraceId:{TraceId}] {Message:lj}{NewLine}{Exception}")
+            .WriteTo.Elasticsearch(new ElasticsearchSinkOptions(new Uri(elasticsearchUrl))
+            {
+                AutoRegisterTemplate = true,
+                IndexFormat = $"online-store-{ServiceName}-logs-{DateTime.UtcNow:yyyy.MM}"
+            });
+    });
+    builder.Services
+        .AddOpenTelemetry()
+        .ConfigureResource(resource => resource.AddService(ServiceName))
+        .WithTracing(tracing => tracing
+            .AddAspNetCoreInstrumentation()
+            .AddHttpClientInstrumentation()
+            .AddOtlpExporter(options =>
+            {
+                options.Endpoint = new Uri(builder.Configuration["Observability:OtlpEndpoint"] ?? "http://jaeger:4317");
+            }));
     builder.Services.AddOpenApi();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
 
     var jitterer = new Random();
     void AddResilientClient(string name, string? baseUrl, string fallbackUrl)
@@ -81,13 +109,26 @@ try
     if (app.Environment.IsDevelopment())
     {
         app.MapOpenApi();
+        app.UseSwagger();
+        app.UseSwaggerUI();
     }
 
+    app.Use(async (context, next) =>
+    {
+        var traceId = Activity.Current?.TraceId.ToString() ?? context.TraceIdentifier;
+        context.Response.Headers["X-Trace-Id"] = traceId;
+        using (LogContext.PushProperty("TraceId", traceId))
+        {
+            await next();
+        }
+    });
     app.UseSerilogRequestLogging();
+    app.UseHttpMetrics();
     app.UseCors("frontend");
     app.UseRateLimiter();
 
     app.MapGet("/health", () => Results.Ok(new { service = "gateway", status = "ok" }));
+    app.MapMetrics("/metrics");
 
     app.MapGet("/api/products", async (string? q, IHttpClientFactory httpClientFactory, CancellationToken ct) =>
     {

@@ -1,0 +1,49 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: gateway
+    static_configs:
+      - targets: ["gateway:8080"]
+    metrics_path: /metrics
+
+  - job_name: order-service
+    static_configs:
+      - targets: ["order-service:8080"]
+    metrics_path: /metrics
+
+  - job_name: payment-service
+    static_configs:
+      - targets: ["payment-service:8080"]
+    metrics_path: /metrics
+
+  - job_name: product-service
+    static_configs:
+      - targets: ["product-service:8080"]
+    metrics_path: /metrics
+
+  - job_name: cart-service
+    static_configs:
+      - targets: ["cart-service:8080"]
+    metrics_path: /metrics
+
+  - job_name: user-service
+    static_configs:
+      - targets: ["user-service:8080"]
+    metrics_path: /metrics
+
+  - job_name: inventory-service
+    static_configs:
+      - targets: ["inventory-service:8080"]
+    metrics_path: /metrics
+
+  - job_name: shipping-service
+    static_configs:
+      - targets: ["shipping-service:8080"]
+    metrics_path: /metrics
+
+  - job_name: history-service
+    static_configs:
+      - targets: ["history-service:8080"]
+    metrics_path: /metrics
