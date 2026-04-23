@@ -23,12 +23,17 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       Observability__OtlpEndpoint: http://jaeger:4317
       Observability__ElasticsearchUrl: http://elasticsearch:9200
+      Messaging__Kafka__BootstrapServers: kafka:9092
+      Messaging__Kafka__Topic: email-notifications
+      Idempotency__RedisConnectionString: redis:6379
+      Idempotency__TtlMinutes: 1440
       Services__OrderServiceBaseUrl: http://order-service:8080
       Services__PaymentServiceBaseUrl: http://payment-service:8080
       Services__ProductServiceBaseUrl: http://product-service:8080
       Services__CartServiceBaseUrl: http://cart-service:8080
       Services__UserServiceBaseUrl: http://user-service:8080
-      Services__InventoryServiceBaseUrl: http://inventory-service:8080
+      Services__InventoryServiceGrpcUrl: http://inventory-service:8080
+      Services__InventoryGrpcTimeoutSeconds: 3
       Services__ShippingServiceBaseUrl: http://shipping-service:8080
       Services__HistoryServiceBaseUrl: http://history-service:8080
     ports:
@@ -50,10 +55,16 @@ services:
         condition: service_started
       history-service:
         condition: service_started
+      email-service:
+        condition: service_started
       jaeger:
         condition: service_started
       elasticsearch:
         condition: service_healthy
+      kafka:
+        condition: service_started
+      redis:
+        condition: service_started
 
   product-service:
     build:
@@ -147,6 +158,48 @@ services:
       Observability__ElasticsearchUrl: http://elasticsearch:9200
     ports:
       - "8089:8080"
+
+  email-service:
+    build:
+      context: .
+      dockerfile: src/Services/EmailService/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      Observability__OtlpEndpoint: http://jaeger:4317
+      Observability__ElasticsearchUrl: http://elasticsearch:9200
+      Messaging__Kafka__BootstrapServers: kafka:9092
+      Messaging__Kafka__Topic: email-notifications
+      Messaging__Kafka__GroupId: email-service-group
+      Email__FromAddress: noreply@onlinestore.local
+    ports:
+      - "8090:8080"
+    depends_on:
+      kafka:
+        condition: service_started
+
+  kafka:
+    image: bitnami/kafka:3.8
+    environment:
+      KAFKA_CFG_NODE_ID: 1
+      KAFKA_CFG_PROCESS_ROLES: broker,controller
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CFG_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_CFG_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_KRAFT_CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    ports:
+      - "9092:9092"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
 
   jaeger:
     image: jaegertracing/all-in-one:1.59

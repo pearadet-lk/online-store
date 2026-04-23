@@ -47,3 +47,8 @@ scrape_configs:
     static_configs:
       - targets: ["history-service:8080"]
     metrics_path: /metrics
+
+  - job_name: email-service
+    static_configs:
+      - targets: ["email-service:8080"]
+    metrics_path: /metrics

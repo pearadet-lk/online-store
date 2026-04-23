@@ -18,6 +18,8 @@ data:
   Services__InventoryServiceBaseUrl: http://inventory-service:8080
   Services__ShippingServiceBaseUrl: http://shipping-service:8080
   Services__HistoryServiceBaseUrl: http://history-service:8080
+  Idempotency__RedisConnectionString: redis:6379
+  Idempotency__TtlMinutes: "1440"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -329,3 +331,36 @@ spec:
   ports:
     - port: 8080
       targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: online-store
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: online-store
+spec:
+  selector:
+    app: redis
+  ports:
+    - port: 6379
+      targetPort: 6379

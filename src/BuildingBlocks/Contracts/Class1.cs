@@ -59,3 +59,22 @@ public sealed record OrderHistoryEventDto(
     string EventType,
     DateTimeOffset CreatedAt,
     string Notes);
+
+public sealed record EmailNotificationRequestedEvent(
+    Guid NotificationId,
+    Guid OrderId,
+    Guid UserId,
+    string CustomerEmail,
+    string CustomerName,
+    decimal Amount,
+    string Currency,
+    DateTimeOffset RequestedAt);
+
+public sealed record EmailSendStatusDto(
+    Guid NotificationId,
+    Guid OrderId,
+    string CustomerEmail,
+    string Status,
+    int AttemptCount,
+    string? ErrorMessage,
+    DateTimeOffset UpdatedAt);

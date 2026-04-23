@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+option csharp_namespace = "Contracts.Grpc";
+
+package inventory;
+
+service InventoryGrpc {
+  rpc Check (InventoryOperationRequest) returns (InventoryOperationReply);
+  rpc Reserve (InventoryOperationRequest) returns (InventoryOperationReply);
+  rpc Release (InventoryOperationRequest) returns (InventoryOperationReply);
+  rpc Commit (InventoryOperationRequest) returns (InventoryOperationReply);
+}
+
+message InventoryOperationRequest {
+  string product_id = 1;
+  int32 quantity = 2;
+}
+
+message InventoryOperationReply {
+  bool success = 1;
+  int32 status_code = 2;
+  string error = 3;
+}

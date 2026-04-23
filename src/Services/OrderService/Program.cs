@@ -38,8 +38,8 @@ try
                 options.Endpoint = new Uri(builder.Configuration["Observability:OtlpEndpoint"] ?? "http://jaeger:4317");
             }));
     builder.Services.AddOpenApi();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen();
     builder.Services.AddSingleton<OrderStore>();
 
     var app = builder.Build();
@@ -77,37 +77,39 @@ builder.Services.AddSwaggerGen();
             "Pending",
             DateTimeOffset.UtcNow);
 
-        store.Orders[order.OrderId] = order;
+        store.Orders[order.OrderId] = new OrderEntry(order, request.Items);
         return Results.Created($"/orders/{order.OrderId}", order);
     });
 
     app.MapGet("/orders/{orderId:guid}", (Guid orderId, OrderStore store) =>
     {
-        return store.Orders.TryGetValue(orderId, out var order)
-            ? Results.Ok(order)
+        return store.Orders.TryGetValue(orderId, out var entry)
+            ? Results.Ok(entry.Order)
             : Results.NotFound();
     });
 
     app.MapPost("/orders/{orderId:guid}/complete", (Guid orderId, OrderStore store) =>
     {
-        if (!store.Orders.TryGetValue(orderId, out var order))
+        if (!store.Orders.TryGetValue(orderId, out var entry))
         {
             return Results.NotFound();
         }
 
-        store.Orders[orderId] = order with { Status = "Completed" };
-        return Results.Ok(store.Orders[orderId]);
+        var updatedOrder = entry.Order with { Status = "Completed" };
+        store.Orders[orderId] = entry with { Order = updatedOrder };
+        return Results.Ok(updatedOrder);
     });
 
     app.MapPost("/orders/{orderId:guid}/fail", (Guid orderId, OrderStore store) =>
     {
-        if (!store.Orders.TryGetValue(orderId, out var order))
+        if (!store.Orders.TryGetValue(orderId, out var entry))
         {
             return Results.NotFound();
         }
 
-        store.Orders[orderId] = order with { Status = "Failed" };
-        return Results.Ok(store.Orders[orderId]);
+        var updatedOrder = entry.Order with { Status = "Failed" };
+        store.Orders[orderId] = entry with { Order = updatedOrder };
+        return Results.Ok(updatedOrder);
     });
 
     app.Run();
@@ -124,5 +126,7 @@ finally
 
 internal sealed class OrderStore
 {
-    public ConcurrentDictionary<Guid, OrderDto> Orders { get; } = new();
+    public ConcurrentDictionary<Guid, OrderEntry> Orders { get; } = new();
 }
+
+internal sealed record OrderEntry(OrderDto Order, IReadOnlyList<CartItemDto> Items);

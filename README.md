@@ -11,6 +11,7 @@ This repository now includes a runnable ASP.NET microservice starter:
 - `InventoryService`
 - `ShippingService`
 - `HistoryService`
+- `EmailService` (Kafka consumer for order confirmation emails + delivery status)
 - `Contracts` shared DTOs
 
 ## Local run (dotnet)
@@ -26,6 +27,7 @@ dotnet run --project src/Services/UserService
 dotnet run --project src/Services/InventoryService
 dotnet run --project src/Services/ShippingService
 dotnet run --project src/Services/HistoryService
+dotnet run --project src/Services/EmailService
 dotnet run --project src/Services/Gateway
 ```
 
@@ -79,6 +81,8 @@ Ports:
 - Inventory Service: `http://localhost:8087`
 - Shipping Service: `http://localhost:8088`
 - History Service: `http://localhost:8089`
+- Email Service: `http://localhost:8090`
+- Kafka broker: `localhost:9092`
 - Jaeger UI: `http://localhost:16686`
 - Prometheus: `http://localhost:9090`
 - Grafana: `http://localhost:3000` (admin/admin)
@@ -94,6 +98,39 @@ All services now expose:
 - structured Serilog logs with trace IDs, shipped to Elasticsearch
 - response `X-Trace-Id` header for quick request correlation
 
+## Kafka email flow and status
+
+- Gateway publishes `EmailNotificationRequestedEvent` to Kafka topic `email-notifications` after successful checkout.
+- `EmailService` consumes the event and sends confirmation email (SMTP if configured; mock send if SMTP is not configured).
+- Delivery status is tracked per order as `Queued` -> `Processing` -> `Sent` or `Failed`.
+- Check status via:
+  - `GET /email/status/{orderId}`
+  - `GET /email/status`
+
+## gRPC between services
+
+- `Gateway` now calls `InventoryService` via gRPC for inventory check/reserve/release/commit.
+
+## Checkout saga at gateway
+
+- Gateway now enforces auth on checkout with `Authorization: Bearer demo-jwt-<userIdN>`.
+- Checkout endpoint is rate-limited (`checkout` policy) before saga execution.
+- Checkout idempotency is enforced by `Idempotency-Key` + `userId` + payload hash:
+  - duplicate in-flight request returns conflict
+  - retry after successful completion returns cached response (prevents duplicate charges)
+  - key reuse with different payload returns conflict
+  - idempotency state is persisted in Redis (`Idempotency:RedisConnectionString`) with in-memory cache fallback if Redis is not configured
+- Saga flow:
+  - Step 1: Check inventory (gRPC)
+  - Step 2: Reserve inventory (gRPC)
+  - Step 3: Process payment (REST)
+  - Step 4: Confirm order
+- gRPC inventory calls use per-call deadline/timeout (default `3s`, configurable via `Services:InventoryGrpcTimeoutSeconds`) for faster retries and quicker circuit-breaker reaction.
+- Compensation on payment failure:
+  - Release inventory (gRPC)
+  - Mark order as failed
+- Saga state endpoint: `GET /api/checkout/sagas/{sagaId}`
+
 ## Local run (Minikube)
 
 Prerequisites:
@@ -101,6 +138,7 @@ Prerequisites:
 - Docker Desktop installed and running
 - Minikube installed
 - `kubectl` installed
+- GNU Make installed (for `make deploy-minikube` option)
 
 Start Minikube:
 
@@ -112,6 +150,12 @@ Deploy all services to Minikube:
 
 ```powershell
 .\scripts\deploy-minikube.ps1
+```
+
+or using Make:
+
+```powershell
+make deploy-minikube
 ```
 
 This script:
@@ -133,6 +177,12 @@ Stop/cleanup:
 ```powershell
 .\scripts\teardown-minikube.ps1
 minikube stop
+```
+
+or using Make:
+
+```powershell
+make teardown-minikube
 ```
 
 ## Production-oriented patterns included

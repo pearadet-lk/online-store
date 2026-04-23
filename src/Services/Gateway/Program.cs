@@ -1,12 +1,19 @@
 using System.Net;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using System.Threading.RateLimiting;
+using Confluent.Kafka;
 using Contracts;
+using Contracts.Grpc;
+using Grpc.Core;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.Extensions.Caching.Distributed;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Polly;
+using Polly.CircuitBreaker;
 using Polly.Extensions.Http;
 using Prometheus;
 using Serilog;
@@ -45,6 +52,27 @@ try
     builder.Services.AddOpenApi();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+    builder.Services.AddSingleton<EmailNotificationPublisher>();
+    builder.Services.AddSingleton<CheckoutSagaStore>();
+    builder.Services.AddSingleton<CheckoutIdempotencyStore>();
+    var idempotencyRedisConnection = builder.Configuration["Idempotency:RedisConnectionString"];
+    if (!string.IsNullOrWhiteSpace(idempotencyRedisConnection))
+    {
+        builder.Services.AddStackExchangeRedisCache(options =>
+        {
+            options.Configuration = idempotencyRedisConnection;
+            options.InstanceName = "online-store:";
+        });
+    }
+    else
+    {
+        builder.Services.AddDistributedMemoryCache();
+    }
+    builder.Services.AddSingleton<IAsyncPolicy<InventoryOperationReply>>(serviceProvider =>
+    {
+        var logger = serviceProvider.GetRequiredService<ILoggerFactory>().CreateLogger("GatewayInventoryGrpcPolly");
+        return InventoryGrpcResilience.BuildInventoryGrpcPolicy(logger);
+    });
 
     var jitterer = new Random();
     void AddResilientClient(string name, string? baseUrl, string fallbackUrl)
@@ -56,14 +84,24 @@ builder.Services.AddSwaggerGen();
     }
 
     var config = builder.Configuration;
+    builder.Services.AddSingleton(_ => new InventoryGrpcCallSettings(
+        TimeSpan.FromSeconds(Math.Clamp(config.GetValue("Services:InventoryGrpcTimeoutSeconds", 3), 1, 30))));
     AddResilientClient("OrderService", config["Services:OrderServiceBaseUrl"], "http://localhost:5240");
     AddResilientClient("PaymentService", config["Services:PaymentServiceBaseUrl"], "http://localhost:5031");
     AddResilientClient("ProductService", config["Services:ProductServiceBaseUrl"], "http://localhost:5225");
     AddResilientClient("CartService", config["Services:CartServiceBaseUrl"], "http://localhost:5078");
     AddResilientClient("UserService", config["Services:UserServiceBaseUrl"], "http://localhost:5121");
-    AddResilientClient("InventoryService", config["Services:InventoryServiceBaseUrl"], "http://localhost:5212");
     AddResilientClient("ShippingService", config["Services:ShippingServiceBaseUrl"], "http://localhost:5219");
     AddResilientClient("HistoryService", config["Services:HistoryServiceBaseUrl"], "http://localhost:5029");
+    builder.Services
+        .AddGrpcClient<InventoryGrpc.InventoryGrpcClient>(options =>
+        {
+            options.Address = new Uri(config["Services:InventoryServiceGrpcUrl"] ?? "http://localhost:5212");
+        })
+        .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler
+        {
+            EnableMultipleHttp2Connections = true
+        });
 
     builder.Services.AddCors(options =>
     {
@@ -129,6 +167,10 @@ builder.Services.AddSwaggerGen();
 
     app.MapGet("/health", () => Results.Ok(new { service = "gateway", status = "ok" }));
     app.MapMetrics("/metrics");
+    app.MapGet("/api/checkout/sagas/{sagaId:guid}", (Guid sagaId, CheckoutSagaStore sagaStore) =>
+        sagaStore.States.TryGetValue(sagaId, out var state)
+            ? Results.Ok(state)
+            : Results.NotFound());
 
     app.MapGet("/api/products", async (string? q, IHttpClientFactory httpClientFactory, CancellationToken ct) =>
     {
@@ -168,9 +210,30 @@ builder.Services.AddSwaggerGen();
             statusCode: (int)response.StatusCode);
     });
 
-    app.MapPost("/api/checkout", async (CheckoutRequest request, HttpContext context, IHttpClientFactory httpClientFactory, ILoggerFactory loggerFactory, CancellationToken ct) =>
+    app.MapPost("/api/checkout", async (
+        CheckoutRequest request,
+        HttpContext context,
+        IHttpClientFactory httpClientFactory,
+        InventoryGrpc.InventoryGrpcClient inventoryClient,
+        IAsyncPolicy<InventoryOperationReply> inventoryPolicy,
+        InventoryGrpcCallSettings inventoryGrpcSettings,
+        CheckoutSagaStore sagaStore,
+        CheckoutIdempotencyStore checkoutIdempotencyStore,
+        ILoggerFactory loggerFactory,
+        EmailNotificationPublisher emailPublisher,
+        CancellationToken ct) =>
     {
-        var logger = loggerFactory.CreateLogger("Checkout");
+        var logger = loggerFactory.CreateLogger("CheckoutSaga");
+        if (!TryGetAuthorizedUserId(context, out var authenticatedUserId))
+        {
+            return Results.Unauthorized();
+        }
+
+        if (authenticatedUserId != request.UserId)
+        {
+            return Results.Forbid();
+        }
+
         if (!context.Request.Headers.TryGetValue("Idempotency-Key", out var idempotencyKeyValues))
         {
             return Results.BadRequest(new { error = "Missing Idempotency-Key header." });
@@ -182,23 +245,76 @@ builder.Services.AddSwaggerGen();
             return Results.BadRequest(new { error = "Idempotency-Key header cannot be empty." });
         }
 
+        var requestHash = ComputeCheckoutPayloadHash(request);
+        var scopedIdempotencyKey = $"{request.UserId:N}:{idempotencyKey}";
+        var acquireResult = await checkoutIdempotencyStore.TryAcquireAsync(scopedIdempotencyKey, requestHash, ct);
+        if (!acquireResult.Acquired)
+        {
+            if (acquireResult.PayloadMismatch)
+            {
+                return Results.Conflict(new { error = "Idempotency key was reused with a different checkout payload." });
+            }
+
+            if (acquireResult.InProgress)
+            {
+                return Results.Conflict(new { error = "Checkout with this idempotency key is already processing." });
+            }
+
+            if (!string.IsNullOrWhiteSpace(acquireResult.ResponseBody))
+            {
+                context.Response.Headers["X-Idempotent-Replay"] = "true";
+                return Results.Content(
+                    acquireResult.ResponseBody,
+                    contentType: "application/json",
+                    statusCode: acquireResult.ResponseStatusCode ?? StatusCodes.Status200OK);
+            }
+        }
+
+        async Task<IResult> FailIdempotentAsync(IResult result)
+        {
+            await checkoutIdempotencyStore.MarkFailedAsync(scopedIdempotencyKey, ct);
+            return result;
+        }
+
+        async Task<IResult> CompleteIdempotentAsync(int statusCode, object payload)
+        {
+            var payloadJson = JsonSerializer.Serialize(payload);
+            await checkoutIdempotencyStore.MarkCompletedAsync(scopedIdempotencyKey, statusCode, payloadJson, ct);
+            return Results.Content(payloadJson, contentType: "application/json", statusCode: statusCode);
+        }
+
+        try
+        {
+        var sagaId = Guid.NewGuid();
+        sagaStore.States[sagaId] = new CheckoutSagaState(sagaId, request.UserId, null, "Started", DateTimeOffset.UtcNow, null);
+        void UpdateSaga(string step, Guid? orderId = null, string? error = null) =>
+            sagaStore.States[sagaId] = new CheckoutSagaState(sagaId, request.UserId, orderId, step, DateTimeOffset.UtcNow, error);
+
         var userClient = httpClientFactory.CreateClient("UserService");
         var cartClient = httpClientFactory.CreateClient("CartService");
         var orderClient = httpClientFactory.CreateClient("OrderService");
         var paymentClient = httpClientFactory.CreateClient("PaymentService");
-        var inventoryClient = httpClientFactory.CreateClient("InventoryService");
         var shippingClient = httpClientFactory.CreateClient("ShippingService");
         var historyClient = httpClientFactory.CreateClient("HistoryService");
 
         var userResponse = await userClient.GetAsync($"/users/{request.UserId}", ct);
         if (userResponse.StatusCode == HttpStatusCode.NotFound)
         {
-            return Results.BadRequest(new { error = "User not found." });
+            UpdateSaga("Failed", error: "User not found");
+            return await FailIdempotentAsync(Results.BadRequest(new { error = "User not found." }));
         }
 
         if (!userResponse.IsSuccessStatusCode)
         {
-            return Results.StatusCode((int)userResponse.StatusCode);
+            UpdateSaga("Failed", error: "User service unavailable");
+            return await FailIdempotentAsync(Results.StatusCode((int)userResponse.StatusCode));
+        }
+
+        var userProfile = await userResponse.Content.ReadFromJsonAsync<UserProfileDto>(cancellationToken: ct);
+        if (userProfile is null)
+        {
+            UpdateSaga("Failed", error: "User profile payload invalid");
+            return await FailIdempotentAsync(Results.StatusCode(StatusCodes.Status502BadGateway));
         }
 
         var cartResponse = await cartClient.GetAsync($"/carts/{request.UserId}", ct);
@@ -207,134 +323,207 @@ builder.Services.AddSwaggerGen();
             var cart = await cartResponse.Content.ReadFromJsonAsync<CartDto>(cancellationToken: ct);
             if (cart is { Items.Count: > 0 } && !CartMatchesCheckout(cart.Items, request.Items))
             {
-                return Results.BadRequest(new { error = "Checkout line items must match the saved cart." });
+                UpdateSaga("Failed", error: "Cart mismatch");
+                return await FailIdempotentAsync(Results.BadRequest(new { error = "Checkout line items must match the saved cart." }));
             }
+        }
+
+        try
+        {
+            UpdateSaga("CheckInventory");
+            foreach (var line in request.Items)
+            {
+                var check = await InventoryGrpcResilience.ExecuteInventoryCallAsync(
+                    inventoryPolicy,
+                    inventoryGrpcSettings,
+                    (deadline, cancellationToken) => inventoryClient.CheckAsync(new InventoryOperationRequest
+                    {
+                        ProductId = line.ProductId.ToString(),
+                        Quantity = line.Quantity
+                    }, deadline: deadline, cancellationToken: cancellationToken).ResponseAsync,
+                    ct);
+                if (!check.Success)
+                {
+                    UpdateSaga("Failed", error: check.Error);
+                    return await FailIdempotentAsync(Results.BadRequest(new { error = check.Error }));
+                }
+            }
+        }
+        catch (BrokenCircuitException)
+        {
+            UpdateSaga("Failed", error: "Inventory circuit open");
+            return await FailIdempotentAsync(Results.StatusCode(StatusCodes.Status503ServiceUnavailable));
+        }
+        catch (Exception ex) when (ex is RpcException or HttpRequestException)
+        {
+            logger.LogWarning(ex, "Inventory check step failed.");
+            UpdateSaga("Failed", error: "Inventory check unavailable");
+            return await FailIdempotentAsync(Results.StatusCode(StatusCodes.Status502BadGateway));
         }
 
         var createOrderRequest = new CreateOrderRequest(request.UserId, request.Currency, request.Items);
         var orderResponse = await orderClient.PostAsJsonAsync("/orders", createOrderRequest, ct);
         if (!orderResponse.IsSuccessStatusCode)
         {
-            return Results.StatusCode((int)orderResponse.StatusCode);
+            UpdateSaga("Failed", error: "Order creation failed");
+            return await FailIdempotentAsync(Results.StatusCode((int)orderResponse.StatusCode));
         }
 
         var order = await orderResponse.Content.ReadFromJsonAsync<OrderDto>(cancellationToken: ct);
         if (order is null)
         {
-            return Results.StatusCode(StatusCodes.Status502BadGateway);
+            UpdateSaga("Failed", error: "Order payload invalid");
+            return await FailIdempotentAsync(Results.StatusCode(StatusCodes.Status502BadGateway));
         }
 
-        var reserved = new List<(Guid ProductId, int Qty)>();
+        UpdateSaga("ReserveInventory", order.OrderId);
+        var reserved = new List<CartItemDto>();
         try
         {
             foreach (var line in request.Items)
             {
-                var reserveResponse = await inventoryClient.PostAsync(
-                    $"/inventory/{line.ProductId}/reserve?quantity={line.Quantity}",
-                    content: null,
-                    ct);
-                if (!reserveResponse.IsSuccessStatusCode)
-                {
-                    await ReleaseInventoryReservationsAsync(inventoryClient, reserved, ct);
-                    await orderClient.PostAsync($"/orders/{order.OrderId}/fail", content: null, ct);
-                    if (reserveResponse.StatusCode == HttpStatusCode.BadRequest)
+                var reserve = await InventoryGrpcResilience.ExecuteInventoryCallAsync(
+                    inventoryPolicy,
+                    inventoryGrpcSettings,
+                    (deadline, cancellationToken) => inventoryClient.ReserveAsync(new InventoryOperationRequest
                     {
-                        return Results.BadRequest(new { error = "Insufficient inventory for one or more products." });
-                    }
-
-                    return Results.StatusCode((int)reserveResponse.StatusCode);
-                }
-
-                reserved.Add((line.ProductId, line.Quantity));
-            }
-
-            var paymentRequest = new AuthorizePaymentRequest(
-                order.OrderId,
-                order.TotalAmount,
-                order.Currency,
-                PaymentMethodToken: "pm_card_visa");
-
-            using var paymentMessage = new HttpRequestMessage(HttpMethod.Post, "/payments/authorize")
-            {
-                Content = JsonContent.Create(paymentRequest)
-            };
-            paymentMessage.Headers.Add("Idempotency-Key", idempotencyKey);
-
-            var paymentResponse = await paymentClient.SendAsync(paymentMessage, ct);
-            if (!paymentResponse.IsSuccessStatusCode)
-            {
-                await ReleaseInventoryReservationsAsync(inventoryClient, reserved, ct);
-                await orderClient.PostAsync($"/orders/{order.OrderId}/fail", content: null, ct);
-                return Results.StatusCode((int)paymentResponse.StatusCode);
-            }
-
-            var payment = await paymentResponse.Content.ReadFromJsonAsync<PaymentDto>(cancellationToken: ct);
-            if (payment is null)
-            {
-                await ReleaseInventoryReservationsAsync(inventoryClient, reserved, ct);
-                await orderClient.PostAsync($"/orders/{order.OrderId}/fail", content: null, ct);
-                return Results.StatusCode(StatusCodes.Status502BadGateway);
-            }
-
-            await orderClient.PostAsync($"/orders/{order.OrderId}/complete", content: null, ct);
-
-            foreach (var line in request.Items)
-            {
-                var commitResponse = await inventoryClient.PostAsync(
-                    $"/inventory/{line.ProductId}/commit?quantity={line.Quantity}",
-                    content: null,
+                        ProductId = line.ProductId.ToString(),
+                        Quantity = line.Quantity
+                    }, deadline: deadline, cancellationToken: cancellationToken).ResponseAsync,
                     ct);
-                if (!commitResponse.IsSuccessStatusCode)
+
+                if (!reserve.Success)
                 {
-                    logger.LogWarning(
-                        "Inventory commit returned {Status} for product {ProductId} order {OrderId}",
-                        commitResponse.StatusCode,
-                        line.ProductId,
-                        order.OrderId);
+                    await CompensateReleaseInventory(inventoryClient, inventoryPolicy, inventoryGrpcSettings, reserved, ct);
+                    await orderClient.PostAsync($"/orders/{order.OrderId}/fail", content: null, ct);
+                    UpdateSaga("Compensated", order.OrderId, reserve.Error);
+                    return await FailIdempotentAsync(Results.BadRequest(new { error = reserve.Error }));
                 }
+
+                reserved.Add(line);
             }
+        }
+        catch (BrokenCircuitException)
+        {
+            await CompensateReleaseInventory(inventoryClient, inventoryPolicy, inventoryGrpcSettings, reserved, ct);
+            await orderClient.PostAsync($"/orders/{order.OrderId}/fail", content: null, ct);
+            UpdateSaga("Compensated", order.OrderId, "Inventory circuit open");
+            return await FailIdempotentAsync(Results.StatusCode(StatusCodes.Status503ServiceUnavailable));
+        }
+        catch (Exception ex) when (ex is RpcException or HttpRequestException)
+        {
+            logger.LogWarning(ex, "Inventory reserve step failed.");
+            await CompensateReleaseInventory(inventoryClient, inventoryPolicy, inventoryGrpcSettings, reserved, ct);
+            await orderClient.PostAsync($"/orders/{order.OrderId}/fail", content: null, ct);
+            UpdateSaga("Compensated", order.OrderId, "Inventory reserve unavailable");
+            return await FailIdempotentAsync(Results.StatusCode(StatusCodes.Status502BadGateway));
+        }
 
-            var shipmentResponse = await shippingClient.PostAsync($"/shipments/{order.OrderId}", content: null, ct);
-            ShipmentDto? shipment = null;
-            if (shipmentResponse.IsSuccessStatusCode)
-            {
-                shipment = await shipmentResponse.Content.ReadFromJsonAsync<ShipmentDto>(cancellationToken: ct);
-            }
-            else
-            {
-                logger.LogWarning("Shipping service returned {Status} for order {OrderId}", shipmentResponse.StatusCode, order.OrderId);
-            }
+        UpdateSaga("ProcessPayment", order.OrderId);
+        var paymentRequest = new AuthorizePaymentRequest(
+            order.OrderId,
+            order.TotalAmount,
+            order.Currency,
+            PaymentMethodToken: "pm_card_visa");
 
-            var historyEvent = new OrderHistoryEventDto(
-                Guid.Empty,
-                order.OrderId,
-                request.UserId,
-                "CheckoutCompleted",
-                default,
-                $"Payment {payment.ProviderReference}; total {order.TotalAmount} {order.Currency}");
-            await historyClient.PostAsJsonAsync("/history/events", historyEvent, ct);
+        using var paymentMessage = new HttpRequestMessage(HttpMethod.Post, "/payments/authorize")
+        {
+            Content = JsonContent.Create(paymentRequest)
+        };
+        paymentMessage.Headers.Add("Idempotency-Key", idempotencyKey);
 
-            await cartClient.DeleteAsync($"/carts/{request.UserId}", ct);
+        var paymentResponse = await paymentClient.SendAsync(paymentMessage, ct);
+        if (!paymentResponse.IsSuccessStatusCode)
+        {
+            await CompensateReleaseInventory(inventoryClient, inventoryPolicy, inventoryGrpcSettings, reserved, ct);
+            await orderClient.PostAsync($"/orders/{order.OrderId}/fail", content: null, ct);
+            UpdateSaga("Compensated", order.OrderId, "Payment failed");
+            return await FailIdempotentAsync(Results.StatusCode((int)paymentResponse.StatusCode));
+        }
 
+        var payment = await paymentResponse.Content.ReadFromJsonAsync<PaymentDto>(cancellationToken: ct);
+        if (payment is null)
+        {
+            await CompensateReleaseInventory(inventoryClient, inventoryPolicy, inventoryGrpcSettings, reserved, ct);
+            await orderClient.PostAsync($"/orders/{order.OrderId}/fail", content: null, ct);
+            UpdateSaga("Compensated", order.OrderId, "Payment payload invalid");
+            return await FailIdempotentAsync(Results.StatusCode(StatusCodes.Status502BadGateway));
+        }
+
+        UpdateSaga("ConfirmOrder", order.OrderId);
+        await orderClient.PostAsync($"/orders/{order.OrderId}/complete", content: null, ct);
+        foreach (var line in reserved)
+        {
+            await InventoryGrpcResilience.ExecuteInventoryCallAsync(
+                inventoryPolicy,
+                inventoryGrpcSettings,
+                (deadline, cancellationToken) => inventoryClient.CommitAsync(new InventoryOperationRequest
+                {
+                    ProductId = line.ProductId.ToString(),
+                    Quantity = line.Quantity
+                }, deadline: deadline, cancellationToken: cancellationToken).ResponseAsync,
+                ct);
+        }
+
+        var shipmentResponse = await shippingClient.PostAsync($"/shipments/{order.OrderId}", content: null, ct);
+        ShipmentDto? shipment = null;
+        if (shipmentResponse.IsSuccessStatusCode)
+        {
+            shipment = await shipmentResponse.Content.ReadFromJsonAsync<ShipmentDto>(cancellationToken: ct);
+        }
+        else
+        {
+            logger.LogWarning("Shipping service returned {Status} for order {OrderId}", shipmentResponse.StatusCode, order.OrderId);
+        }
+
+        var historyEvent = new OrderHistoryEventDto(
+            Guid.Empty,
+            order.OrderId,
+            request.UserId,
+            "CheckoutCompleted",
+            default,
+            $"Payment {payment.ProviderReference}; total {order.TotalAmount} {order.Currency}");
+        await historyClient.PostAsJsonAsync("/history/events", historyEvent, ct);
+
+        await cartClient.DeleteAsync($"/carts/{request.UserId}", ct);
+
+        var emailEvent = new EmailNotificationRequestedEvent(
+            NotificationId: Guid.NewGuid(),
+            OrderId: order.OrderId,
+            UserId: request.UserId,
+            CustomerEmail: userProfile.Email,
+            CustomerName: userProfile.FullName,
+            Amount: order.TotalAmount,
+            Currency: order.Currency,
+            RequestedAt: DateTimeOffset.UtcNow);
+
+        try
+        {
+            await emailPublisher.PublishAsync(emailEvent, ct);
             logger.LogInformation(
-                "[EmailStub] Would send order confirmation email for order {OrderId} to user {UserId}",
-                order.OrderId,
-                request.UserId);
-
-            return Results.Ok(new
-            {
-                order,
-                payment,
-                shipment,
-                status = "CheckoutCompleted"
-            });
+                "Queued order confirmation email event {NotificationId} for order {OrderId}",
+                emailEvent.NotificationId,
+                order.OrderId);
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Checkout failed after order {OrderId} was created", order.OrderId);
-            await ReleaseInventoryReservationsAsync(inventoryClient, reserved, ct);
-            await orderClient.PostAsync($"/orders/{order.OrderId}/fail", content: null, ct);
-            throw;
+            logger.LogWarning(ex, "Failed to publish email notification event for order {OrderId}", order.OrderId);
+        }
+
+        UpdateSaga("Completed", order.OrderId);
+        return await CompleteIdempotentAsync(StatusCodes.Status200OK, new
+        {
+            sagaId,
+            order,
+            payment,
+            shipment,
+            status = "CheckoutCompleted"
+        });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Checkout saga failed unexpectedly for user {UserId}", request.UserId);
+            return await FailIdempotentAsync(Results.StatusCode(StatusCodes.Status500InternalServerError));
         }
     })
     .RequireRateLimiting("checkout");
@@ -370,14 +559,6 @@ static bool CartMatchesCheckout(IReadOnlyList<CartItemDto> cart, IReadOnlyList<C
     return true;
 }
 
-static async Task ReleaseInventoryReservationsAsync(HttpClient inventoryClient, List<(Guid ProductId, int Qty)> reserved, CancellationToken ct)
-{
-    foreach (var (productId, qty) in reserved)
-    {
-        await inventoryClient.PostAsync($"/inventory/{productId}/release?quantity={qty}", content: null, ct);
-    }
-}
-
 static IAsyncPolicy<HttpResponseMessage> GetRetryPolicy(Random random) =>
     HttpPolicyExtensions
         .HandleTransientHttpError()
@@ -393,3 +574,294 @@ static IAsyncPolicy<HttpResponseMessage> GetCircuitBreakerPolicy() =>
         .CircuitBreakerAsync(
             handledEventsAllowedBeforeBreaking: 3,
             durationOfBreak: TimeSpan.FromSeconds(30));
+
+static async Task CompensateReleaseInventory(
+    InventoryGrpc.InventoryGrpcClient inventoryClient,
+    IAsyncPolicy<InventoryOperationReply> inventoryPolicy,
+    InventoryGrpcCallSettings inventoryGrpcSettings,
+    IReadOnlyList<CartItemDto> reservedItems,
+    CancellationToken cancellationToken)
+{
+    foreach (var line in reservedItems)
+    {
+        await InventoryGrpcResilience.ExecuteInventoryCallAsync(
+            inventoryPolicy,
+            inventoryGrpcSettings,
+            (deadline, token) => inventoryClient.ReleaseAsync(new InventoryOperationRequest
+            {
+                ProductId = line.ProductId.ToString(),
+                Quantity = line.Quantity
+            }, deadline: deadline, cancellationToken: token).ResponseAsync,
+            cancellationToken);
+    }
+}
+
+static bool TryGetAuthorizedUserId(HttpContext context, out Guid userId)
+{
+    userId = Guid.Empty;
+    if (!context.Request.Headers.TryGetValue("Authorization", out var authorization))
+    {
+        return false;
+    }
+
+    var headerValue = authorization.ToString().Trim();
+    if (!headerValue.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var token = headerValue["Bearer ".Length..].Trim();
+    const string prefix = "demo-jwt-";
+    if (!token.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    var userIdPart = token[prefix.Length..];
+    return userIdPart.Length == 32 && Guid.TryParseExact(userIdPart, "N", out userId);
+}
+
+static string ComputeCheckoutPayloadHash(CheckoutRequest request)
+{
+    var payload = JsonSerializer.Serialize(request);
+    return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
+}
+
+internal sealed class CheckoutIdempotencyStore(IDistributedCache cache, IConfiguration configuration)
+{
+    private readonly TimeSpan _ttl = TimeSpan.FromMinutes(Math.Clamp(configuration.GetValue("Idempotency:TtlMinutes", 1440), 1, 10080));
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.Ordinal);
+
+    public async Task<CheckoutIdempotencyAcquireResult> TryAcquireAsync(string scopedKey, string requestHash, CancellationToken cancellationToken)
+    {
+        var gate = _locks.GetOrAdd(scopedKey, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var existing = await ReadAsync(scopedKey, cancellationToken);
+            if (existing is not null && !string.Equals(existing.RequestHash, requestHash, StringComparison.Ordinal))
+            {
+                return new CheckoutIdempotencyAcquireResult(false, true, false, null, null);
+            }
+
+            if (existing is { InProgress: true })
+            {
+                return new CheckoutIdempotencyAcquireResult(false, false, true, null, null);
+            }
+
+            if (existing is { ResponseBody: not null })
+            {
+                return new CheckoutIdempotencyAcquireResult(false, false, false, existing.ResponseStatusCode, existing.ResponseBody);
+            }
+
+            var next = existing is null
+                ? new CheckoutIdempotencyRecord(requestHash, true, null, null, DateTimeOffset.UtcNow)
+                : existing with { InProgress = true, UpdatedAt = DateTimeOffset.UtcNow, RequestHash = requestHash };
+            await WriteAsync(scopedKey, next, cancellationToken);
+            return new CheckoutIdempotencyAcquireResult(true, false, false, null, null);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task MarkFailedAsync(string scopedKey, CancellationToken cancellationToken)
+    {
+        var gate = _locks.GetOrAdd(scopedKey, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var existing = await ReadAsync(scopedKey, cancellationToken);
+            if (existing is null)
+            {
+                return;
+            }
+
+            await WriteAsync(scopedKey, existing with
+            {
+                InProgress = false,
+                ResponseStatusCode = null,
+                ResponseBody = null,
+                UpdatedAt = DateTimeOffset.UtcNow
+            }, cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    public async Task MarkCompletedAsync(string scopedKey, int statusCode, string responseBody, CancellationToken cancellationToken)
+    {
+        var gate = _locks.GetOrAdd(scopedKey, _ => new SemaphoreSlim(1, 1));
+        await gate.WaitAsync(cancellationToken);
+        try
+        {
+            var existing = await ReadAsync(scopedKey, cancellationToken);
+            if (existing is null)
+            {
+                return;
+            }
+
+            await WriteAsync(scopedKey, existing with
+            {
+                InProgress = false,
+                ResponseStatusCode = statusCode,
+                ResponseBody = responseBody,
+                UpdatedAt = DateTimeOffset.UtcNow
+            }, cancellationToken);
+        }
+        finally
+        {
+            gate.Release();
+        }
+    }
+
+    private async Task<CheckoutIdempotencyRecord?> ReadAsync(string scopedKey, CancellationToken cancellationToken)
+    {
+        var json = await cache.GetStringAsync(CacheKey(scopedKey), cancellationToken);
+        return string.IsNullOrWhiteSpace(json)
+            ? null
+            : JsonSerializer.Deserialize<CheckoutIdempotencyRecord>(json);
+    }
+
+    private Task WriteAsync(string scopedKey, CheckoutIdempotencyRecord record, CancellationToken cancellationToken)
+    {
+        var json = JsonSerializer.Serialize(record);
+        return cache.SetStringAsync(
+            CacheKey(scopedKey),
+            json,
+            new DistributedCacheEntryOptions
+            {
+                AbsoluteExpirationRelativeToNow = _ttl
+            },
+            cancellationToken);
+    }
+
+    private static string CacheKey(string scopedKey) => $"checkout:idempotency:{scopedKey}";
+}
+
+internal sealed record CheckoutIdempotencyAcquireResult(
+    bool Acquired,
+    bool PayloadMismatch,
+    bool InProgress,
+    int? ResponseStatusCode,
+    string? ResponseBody);
+
+internal sealed record CheckoutIdempotencyRecord(
+    string RequestHash,
+    bool InProgress,
+    int? ResponseStatusCode,
+    string? ResponseBody,
+    DateTimeOffset UpdatedAt);
+
+internal sealed class CheckoutSagaStore
+{
+    public ConcurrentDictionary<Guid, CheckoutSagaState> States { get; } = new();
+}
+
+internal sealed record CheckoutSagaState(
+    Guid SagaId,
+    Guid UserId,
+    Guid? OrderId,
+    string Step,
+    DateTimeOffset UpdatedAt,
+    string? ErrorMessage);
+
+internal sealed record InventoryGrpcCallSettings(TimeSpan Timeout);
+
+internal static class InventoryGrpcResilience
+{
+    public static Task<InventoryOperationReply> ExecuteInventoryCallAsync(
+        IAsyncPolicy<InventoryOperationReply> inventoryPolicy,
+        InventoryGrpcCallSettings callSettings,
+        Func<DateTime, CancellationToken, Task<InventoryOperationReply>> operation,
+        CancellationToken cancellationToken) =>
+        inventoryPolicy.ExecuteAsync(
+            async (_, token) =>
+            {
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(token);
+                timeoutCts.CancelAfter(callSettings.Timeout);
+                var deadline = DateTime.UtcNow.Add(callSettings.Timeout);
+                return await operation(deadline, timeoutCts.Token);
+            },
+            new Context(),
+            cancellationToken);
+
+    public static IAsyncPolicy<InventoryOperationReply> BuildInventoryGrpcPolicy(Microsoft.Extensions.Logging.ILogger logger)
+    {
+        var jitterer = new Random();
+
+        var retryPolicy = Policy<InventoryOperationReply>
+            .Handle<RpcException>(IsTransientRpcException)
+            .Or<HttpRequestException>()
+            .WaitAndRetryAsync(
+                retryCount: 3,
+                sleepDurationProvider: retryAttempt =>
+                    TimeSpan.FromMilliseconds(150 * retryAttempt + jitterer.Next(0, 100)),
+                onRetry: (outcome, delay, retryCount, _) =>
+                {
+                    logger.LogWarning(
+                        outcome.Exception,
+                        "Retrying inventory gRPC call in {DelayMs} ms (attempt {RetryAttempt})",
+                        delay.TotalMilliseconds,
+                        retryCount);
+                });
+
+        var circuitBreakerPolicy = Policy<InventoryOperationReply>
+            .Handle<RpcException>(IsTransientRpcException)
+            .Or<HttpRequestException>()
+            .CircuitBreakerAsync(
+                handledEventsAllowedBeforeBreaking: 3,
+                durationOfBreak: TimeSpan.FromSeconds(30),
+                onBreak: (outcome, breakDelay) =>
+                    logger.LogWarning(
+                        outcome.Exception,
+                        "Inventory gRPC circuit opened for {BreakSeconds} seconds",
+                        breakDelay.TotalSeconds),
+                onReset: () => logger.LogInformation("Inventory gRPC circuit reset"),
+                onHalfOpen: () => logger.LogInformation("Inventory gRPC circuit half-open"));
+
+        return Policy.WrapAsync(retryPolicy, circuitBreakerPolicy);
+    }
+
+    private static bool IsTransientRpcException(RpcException rpcException) =>
+        rpcException.StatusCode is
+            Grpc.Core.StatusCode.Unavailable or
+            Grpc.Core.StatusCode.DeadlineExceeded or
+            Grpc.Core.StatusCode.Internal or
+            Grpc.Core.StatusCode.ResourceExhausted;
+}
+
+internal sealed class EmailNotificationPublisher(IConfiguration configuration, ILogger<EmailNotificationPublisher> logger) : IDisposable
+{
+    private readonly string _topic = configuration["Messaging:Kafka:Topic"] ?? "email-notifications";
+    private readonly IProducer<Null, string> _producer = new ProducerBuilder<Null, string>(new ProducerConfig
+    {
+        BootstrapServers = configuration["Messaging:Kafka:BootstrapServers"] ?? "localhost:9092",
+        Acks = Acks.All
+    }).Build();
+
+    public async Task PublishAsync(EmailNotificationRequestedEvent notification, CancellationToken cancellationToken)
+    {
+        var payload = JsonSerializer.Serialize(notification);
+        var result = await _producer.ProduceAsync(
+            _topic,
+            new Message<Null, string> { Value = payload },
+            cancellationToken);
+
+        logger.LogInformation(
+            "Email event for order {OrderId} published to {Topic}@{Partition}/{Offset}",
+            notification.OrderId,
+            _topic,
+            result.Partition.Value,
+            result.Offset.Value);
+    }
+
+    public void Dispose()
+    {
+        _producer.Flush(TimeSpan.FromSeconds(3));
+        _producer.Dispose();
+    }
+}
