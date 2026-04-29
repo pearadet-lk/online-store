@@ -86,6 +86,29 @@ Content-Type: application/json
 }
 ```
 
+Versioned form (recommended):
+
+```http
+POST http://localhost:5152/api/v1/checkout
+Idempotency-Key: order-123-attempt-1
+Content-Type: application/json
+```
+
+## API versioning
+
+All backend services now support URL version prefix `v1`.
+
+- Existing routes continue to work (for backward compatibility).
+- Versioned routes are available by prefixing with `/api/v1`.
+- Response header `api-supported-versions: v1` is returned by each service.
+
+Examples:
+
+- Gateway health: `http://localhost:5152/api/v1/health`
+- Gateway products: `http://localhost:5152/api/v1/products`
+- Gateway checkout: `http://localhost:5152/api/v1/checkout`
+- Direct Order service (port-forward): `http://localhost:18082/api/v1/orders`
+
 ## Sample transaction runners
 
 You now have two ready scripts to generate sample traffic:

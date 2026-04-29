@@ -10,6 +10,7 @@ using Serilog.Sinks.Elasticsearch;
 using Shared;
 
 const string ServiceName = "order-service";
+const string DefaultApiVersion = "v1";
 
 try
 {
@@ -65,6 +66,16 @@ try
     });
     app.UseSerilogRequestLogging();
     app.UseHttpMetrics();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments($"/api/{DefaultApiVersion}", out var remaining))
+    {
+        context.Request.Path = remaining.HasValue ? remaining : "/";
+    }
+
+    context.Response.Headers["api-supported-versions"] = DefaultApiVersion;
+    await next();
+});
 
     app.MapGet("/health", () => Results.Ok(new { service = "order-service", status = "ok" }));
     app.MapMetrics("/metrics");

@@ -27,6 +27,7 @@ using Serilog.Sinks.Elasticsearch;
 using Shared;
 
 const string ServiceName = "gateway";
+const string DefaultApiVersion = "v1";
 
 try
 {
@@ -181,6 +182,16 @@ builder.Services.AddSwaggerGen();
     });
     app.UseSerilogRequestLogging();
     app.UseHttpMetrics();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments($"/api/{DefaultApiVersion}", out var remaining))
+    {
+        context.Request.Path = remaining.HasValue ? remaining : "/";
+    }
+
+    context.Response.Headers["api-supported-versions"] = DefaultApiVersion;
+    await next();
+});
     app.UseCors("frontend");
     app.UseRateLimiter();
 

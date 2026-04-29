@@ -16,6 +16,7 @@ using Serilog.Sinks.Elasticsearch;
 using Shared;
 
 const string ServiceName = "user-service";
+const string DefaultApiVersion = "v1";
 const string DemoEmail = "demo@example.com";
 const string DemoPassword = "demo-password";
 const string DemoFullName = "Demo User";
@@ -99,6 +100,16 @@ app.Use(async (context, next) =>
 });
 app.UseSerilogRequestLogging();
 app.UseHttpMetrics();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments($"/api/{DefaultApiVersion}", out var remaining))
+    {
+        context.Request.Path = remaining.HasValue ? remaining : "/";
+    }
+
+    context.Response.Headers["api-supported-versions"] = DefaultApiVersion;
+    await next();
+});
 
 app.MapGet("/health", () => Results.Ok(new { service = "user-service", status = "ok" }));
 app.MapMetrics("/metrics");

@@ -10,6 +10,7 @@ using Serilog.Sinks.Elasticsearch;
 using Shared;
 
 const string ServiceName = "cart-service";
+const string DefaultApiVersion = "v1";
 var builder = WebApplication.CreateBuilder(args);
 builder.Host.UseSerilog((context, _, loggerConfiguration) =>
 {
@@ -62,6 +63,16 @@ app.Use(async (context, next) =>
 });
 app.UseSerilogRequestLogging();
 app.UseHttpMetrics();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments($"/api/{DefaultApiVersion}", out var remaining))
+    {
+        context.Request.Path = remaining.HasValue ? remaining : "/";
+    }
+
+    context.Response.Headers["api-supported-versions"] = DefaultApiVersion;
+    await next();
+});
 
 app.MapGet("/health", () => Results.Ok(new { service = "cart-service", status = "ok", recommendation = "Use Redis in production" }));
 app.MapMetrics("/metrics");

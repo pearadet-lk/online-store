@@ -13,6 +13,7 @@ using Serilog.Sinks.Elasticsearch;
 using Shared;
 
 const string ServiceName = "inventory-service";
+const string DefaultApiVersion = "v1";
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.ConfigureKestrel(options =>
 {
@@ -70,6 +71,16 @@ app.Use(async (context, next) =>
 });
 app.UseSerilogRequestLogging();
 app.UseHttpMetrics();
+app.Use(async (context, next) =>
+{
+    if (context.Request.Path.StartsWithSegments($"/api/{DefaultApiVersion}", out var remaining))
+    {
+        context.Request.Path = remaining.HasValue ? remaining : "/";
+    }
+
+    context.Response.Headers["api-supported-versions"] = DefaultApiVersion;
+    await next();
+});
 
 app.MapGet("/health", () => Results.Ok(new { service = "inventory-service", status = "ok" }));
 app.MapMetrics("/metrics");
