@@ -26,6 +26,7 @@ foreach ($image in $images) {
 
 Write-Host "Applying Kubernetes manifests..." -ForegroundColor Cyan
 kubectl apply -f k8s/minikube-all-in-one.yaml
+kubectl apply -f k8s/minikube-monitoring.yaml
 
 $deployments = @(
     "gateway",
@@ -36,7 +37,12 @@ $deployments = @(
     "user-service",
     "inventory-service",
     "shipping-service",
-    "history-service"
+    "history-service",
+    "jaeger",
+    "prometheus",
+    "grafana",
+    "elasticsearch",
+    "kibana"
 )
 
 foreach ($deployment in $deployments) {
@@ -44,6 +50,15 @@ foreach ($deployment in $deployments) {
     kubectl rollout status deployment/$deployment -n online-store --timeout=180s
 }
 
-$gatewayUrl = minikube service gateway -n online-store --url
+Write-Host "Starting all Minikube port-forwards..." -ForegroundColor Cyan
+& (Join-Path $PSScriptRoot "port-forward-minikube.ps1")
+
+$gatewayUrl = "http://localhost:5152"
 Write-Host "Minikube deployment completed." -ForegroundColor Green
 Write-Host "Gateway URL: $gatewayUrl" -ForegroundColor Green
+Write-Host ""
+Write-Host "Note: k8s/minikube-all-in-one.yaml does not deploy the React/Angular/Vue apps." -ForegroundColor Yellow
+Write-Host "  - Start a UI locally (see README Frontend apps)." -ForegroundColor Yellow
+Write-Host "  - Port-forwards are started automatically for gateway/services." -ForegroundColor Yellow
+Write-Host "  - Frontend dev proxies can use http://localhost:5152" -ForegroundColor Yellow
+Write-Host "  - Kafka and EmailService are not included in Minikube manifests yet." -ForegroundColor Yellow

@@ -1,0 +1,260 @@
+name: deploy-k8s-multicloud
+
+on:
+  push:
+    branches:
+      - deploy/eks
+      - deploy/aks
+      - deploy/gke
+    tags:
+      - "eks-v*"
+      - "aks-v*"
+      - "gke-v*"
+  workflow_dispatch:
+    inputs:
+      cloud:
+        description: "Cloud target"
+        required: true
+        type: choice
+        options:
+          - eks
+          - aks
+          - gke
+
+permissions:
+  id-token: write
+  contents: read
+  packages: read
+
+env:
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  resolve-target:
+    runs-on: ubuntu-latest
+    outputs:
+      cloud: ${{ steps.resolve.outputs.cloud }}
+      overlay: ${{ steps.resolve.outputs.overlay }}
+    steps:
+      - id: resolve
+        shell: bash
+        run: |
+          CLOUD_INPUT="${{ github.event.inputs.cloud }}"
+          REF="${GITHUB_REF}"
+          CLOUD=""
+          if [[ -n "${CLOUD_INPUT}" ]]; then
+            CLOUD="${CLOUD_INPUT}"
+          elif [[ "${REF}" == "refs/heads/deploy/eks" || "${REF}" == refs/tags/eks-v* ]]; then
+            CLOUD="eks"
+          elif [[ "${REF}" == "refs/heads/deploy/aks" || "${REF}" == refs/tags/aks-v* ]]; then
+            CLOUD="aks"
+          elif [[ "${REF}" == "refs/heads/deploy/gke" || "${REF}" == refs/tags/gke-v* ]]; then
+            CLOUD="gke"
+          else
+            echo "Unsupported branch/tag for deployment."
+            exit 1
+          fi
+          echo "cloud=${CLOUD}" >> "$GITHUB_OUTPUT"
+          echo "overlay=k8s/production/overlays/${CLOUD}" >> "$GITHUB_OUTPUT"
+
+  build-test:
+    runs-on: ubuntu-latest
+    needs: resolve-target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet restore OnlineStore.sln
+      - run: dotnet build OnlineStore.sln --configuration Release --no-restore
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [resolve-target, build-test]
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials (EKS)
+        if: needs.resolve-target.outputs.cloud == 'eks'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login Amazon ECR (EKS)
+        if: needs.resolve-target.outputs.cloud == 'eks'
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Azure login (AKS)
+        if: needs.resolve-target.outputs.cloud == 'aks'
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login ACR (AKS)
+        if: needs.resolve-target.outputs.cloud == 'aks'
+        run: az acr login --name "${{ secrets.ACR_NAME }}"
+
+      - name: Google auth (GKE)
+        if: needs.resolve-target.outputs.cloud == 'gke'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT_EMAIL }}
+
+      - name: Setup gcloud (GKE)
+        if: needs.resolve-target.outputs.cloud == 'gke'
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry (GKE)
+        if: needs.resolve-target.outputs.cloud == 'gke'
+        run: gcloud auth configure-docker "${{ secrets.GCP_ARTIFACT_REGISTRY_HOST }}" --quiet
+
+      - name: Detect changed services
+        id: changes
+        shell: bash
+        run: |
+          set -eu
+          # Build all for tags and manual runs to guarantee deterministic release artifacts.
+          if [[ "${GITHUB_REF}" == refs/tags/* || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "build_all=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          BEFORE_SHA="${{ github.event.before }}"
+          if [[ -z "${BEFORE_SHA}" || "${BEFORE_SHA}" == "0000000000000000000000000000000000000000" ]]; then
+            echo "build_all=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          CHANGED_FILES="$(git diff --name-only "${BEFORE_SHA}" "${GITHUB_SHA}")"
+
+          # Any shared contract/build/deploy change can impact all services.
+          if echo "${CHANGED_FILES}" | grep -Eq '^(src/BuildingBlocks/|Directory\.Build\.|Directory\.Packages\.props|NuGet\.config|docker-compose\.yml|k8s/|\.github/workflows/)'; then
+            echo "build_all=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          has_change() {
+            local pattern="$1"
+            echo "${CHANGED_FILES}" | grep -Eq "^${pattern}" && echo "true" || echo "false"
+          }
+
+          echo "build_all=false" >> "$GITHUB_OUTPUT"
+          echo "gateway=$(has_change src/Services/Gateway/)" >> "$GITHUB_OUTPUT"
+          echo "order_service=$(has_change src/Services/OrderService/)" >> "$GITHUB_OUTPUT"
+          echo "payment_service=$(has_change src/Services/PaymentService/)" >> "$GITHUB_OUTPUT"
+          echo "product_service=$(has_change src/Services/ProductService/)" >> "$GITHUB_OUTPUT"
+          echo "cart_service=$(has_change src/Services/CartService/)" >> "$GITHUB_OUTPUT"
+          echo "user_service=$(has_change src/Services/UserService/)" >> "$GITHUB_OUTPUT"
+          echo "inventory_service=$(has_change src/Services/InventoryService/)" >> "$GITHUB_OUTPUT"
+          echo "shipping_service=$(has_change src/Services/ShippingService/)" >> "$GITHUB_OUTPUT"
+          echo "history_service=$(has_change src/Services/HistoryService/)" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push images
+        shell: bash
+        run: |
+          set -eu
+          if [[ "${{ needs.resolve-target.outputs.cloud }}" == "eks" ]]; then
+            REGISTRY="${{ secrets.ECR_REGISTRY }}"
+          elif [[ "${{ needs.resolve-target.outputs.cloud }}" == "aks" ]]; then
+            REGISTRY="${{ secrets.ACR_LOGIN_SERVER }}"
+          else
+            REGISTRY="${{ secrets.GAR_REPOSITORY_PREFIX }}"
+          fi
+
+          BUILD_ALL="${{ steps.changes.outputs.build_all }}"
+
+          should_build() {
+            local service_flag="$1"
+            if [[ "${BUILD_ALL}" == "true" ]]; then
+              echo "true"
+            elif [[ "${service_flag}" == "true" ]]; then
+              echo "true"
+            else
+              echo "false"
+            fi
+          }
+
+          build_service() {
+            local name="$1"
+            local dockerfile="$2"
+            local enabled="$3"
+            if [[ "${enabled}" != "true" ]]; then
+              echo "Skipping ${name} (unchanged)"
+              return
+            fi
+            local image="${REGISTRY}/online-store-${name}:${IMAGE_TAG}"
+            echo "Building ${image}"
+            docker build -f "${dockerfile}" -t "${image}" .
+            docker push "${image}"
+          }
+
+          build_service "gateway" "src/Services/Gateway/Dockerfile" "$(should_build "${{ steps.changes.outputs.gateway }}")"
+          build_service "order-service" "src/Services/OrderService/Dockerfile" "$(should_build "${{ steps.changes.outputs.order_service }}")"
+          build_service "payment-service" "src/Services/PaymentService/Dockerfile" "$(should_build "${{ steps.changes.outputs.payment_service }}")"
+          build_service "product-service" "src/Services/ProductService/Dockerfile" "$(should_build "${{ steps.changes.outputs.product_service }}")"
+          build_service "cart-service" "src/Services/CartService/Dockerfile" "$(should_build "${{ steps.changes.outputs.cart_service }}")"
+          build_service "user-service" "src/Services/UserService/Dockerfile" "$(should_build "${{ steps.changes.outputs.user_service }}")"
+          build_service "inventory-service" "src/Services/InventoryService/Dockerfile" "$(should_build "${{ steps.changes.outputs.inventory_service }}")"
+          build_service "shipping-service" "src/Services/ShippingService/Dockerfile" "$(should_build "${{ steps.changes.outputs.shipping_service }}")"
+          build_service "history-service" "src/Services/HistoryService/Dockerfile" "$(should_build "${{ steps.changes.outputs.history_service }}")"
+
+      - name: Configure kubectl (EKS)
+        if: needs.resolve-target.outputs.cloud == 'eks'
+        run: aws eks update-kubeconfig --name "${{ secrets.EKS_CLUSTER_NAME }}" --region "${{ secrets.AWS_REGION }}"
+
+      - name: Configure kubectl (AKS)
+        if: needs.resolve-target.outputs.cloud == 'aks'
+        run: az aks get-credentials --resource-group "${{ secrets.AKS_RESOURCE_GROUP }}" --name "${{ secrets.AKS_CLUSTER_NAME }}" --overwrite-existing
+
+      - name: Configure kubectl (GKE)
+        if: needs.resolve-target.outputs.cloud == 'gke'
+        run: gcloud container clusters get-credentials "${{ secrets.GKE_CLUSTER_NAME }}" --region "${{ secrets.GKE_CLUSTER_REGION }}" --project "${{ secrets.GCP_PROJECT_ID }}"
+
+      - name: Deploy overlay
+        run: kubectl apply -k "${{ needs.resolve-target.outputs.overlay }}"
+
+      - name: Set rollout images
+        shell: bash
+        run: |
+          set -eu
+          if [[ "${{ needs.resolve-target.outputs.cloud }}" == "eks" ]]; then
+            REGISTRY="${{ secrets.ECR_REGISTRY }}"
+          elif [[ "${{ needs.resolve-target.outputs.cloud }}" == "aks" ]]; then
+            REGISTRY="${{ secrets.ACR_LOGIN_SERVER }}"
+          else
+            REGISTRY="${{ secrets.GAR_REPOSITORY_PREFIX }}"
+          fi
+
+          BUILD_ALL="${{ steps.changes.outputs.build_all }}"
+          update_image() {
+            local deployment="$1"
+            local container="$2"
+            local image_name="$3"
+            local enabled="$4"
+            if [[ "${BUILD_ALL}" == "true" || "${enabled}" == "true" ]]; then
+              kubectl -n online-store set image "deployment/${deployment}" "${container}=${REGISTRY}/${image_name}:${IMAGE_TAG}"
+            else
+              echo "No image update for ${deployment}"
+            fi
+          }
+
+          update_image "gateway" "gateway" "online-store-gateway" "${{ steps.changes.outputs.gateway }}"
+          update_image "order-service" "order-service" "online-store-order-service" "${{ steps.changes.outputs.order_service }}"
+          update_image "payment-service" "payment-service" "online-store-payment-service" "${{ steps.changes.outputs.payment_service }}"
+          update_image "product-service" "product-service" "online-store-product-service" "${{ steps.changes.outputs.product_service }}"
+          update_image "cart-service" "cart-service" "online-store-cart-service" "${{ steps.changes.outputs.cart_service }}"
+          update_image "user-service" "user-service" "online-store-user-service" "${{ steps.changes.outputs.user_service }}"
+          update_image "inventory-service" "inventory-service" "online-store-inventory-service" "${{ steps.changes.outputs.inventory_service }}"
+          update_image "shipping-service" "shipping-service" "online-store-shipping-service" "${{ steps.changes.outputs.shipping_service }}"
+          update_image "history-service" "history-service" "online-store-history-service" "${{ steps.changes.outputs.history_service }}"
+
+      - name: Wait for gateway rollout
+        run: kubectl -n online-store rollout status deployment/gateway --timeout=300s

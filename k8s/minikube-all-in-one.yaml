@@ -15,11 +15,16 @@ data:
   Services__ProductServiceBaseUrl: http://product-service:8080
   Services__CartServiceBaseUrl: http://cart-service:8080
   Services__UserServiceBaseUrl: http://user-service:8080
-  Services__InventoryServiceBaseUrl: http://inventory-service:8080
+  Services__InventoryServiceGrpcUrl: http://inventory-service:8080
   Services__ShippingServiceBaseUrl: http://shipping-service:8080
   Services__HistoryServiceBaseUrl: http://history-service:8080
   Idempotency__RedisConnectionString: redis:6379
   Idempotency__TtlMinutes: "1440"
+  ConnectionStrings__Catalog: Host=postgres;Port=5432;Database=onlinestore;Username=onlinestore;Password=onlinestore
+  ConnectionStrings__Users: Host=postgres;Port=5432;Database=onlinestore;Username=onlinestore;Password=onlinestore
+  Auth__JwtIssuer: online-store
+  Auth__JwtAudience: online-store-clients
+  Auth__JwtSigningKey: dev-super-secret-signing-key-min-32-chars
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -81,6 +86,12 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          env:
+            - name: ConnectionStrings__Catalog
+              valueFrom:
+                configMapKeyRef:
+                  name: gateway-config
+                  key: ConnectionStrings__Catalog
 ---
 apiVersion: v1
 kind: Service
@@ -93,6 +104,46 @@ spec:
   ports:
     - port: 8080
       targetPort: 8080
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: online-store
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              value: onlinestore
+            - name: POSTGRES_USER
+              value: onlinestore
+            - name: POSTGRES_PASSWORD
+              value: onlinestore
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: online-store
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -217,6 +268,27 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          env:
+            - name: ConnectionStrings__Users
+              valueFrom:
+                configMapKeyRef:
+                  name: gateway-config
+                  key: ConnectionStrings__Users
+            - name: Auth__JwtIssuer
+              valueFrom:
+                configMapKeyRef:
+                  name: gateway-config
+                  key: Auth__JwtIssuer
+            - name: Auth__JwtAudience
+              valueFrom:
+                configMapKeyRef:
+                  name: gateway-config
+                  key: Auth__JwtAudience
+            - name: Auth__JwtSigningKey
+              valueFrom:
+                configMapKeyRef:
+                  name: gateway-config
+                  key: Auth__JwtSigningKey
 ---
 apiVersion: v1
 kind: Service

@@ -25,4 +25,8 @@
     <ProjectReference Include="..\..\BuildingBlocks\Contracts\Contracts.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\..\BuildingBlocks\Shared\GlobalExceptionHandlingExtensions.cs" Link="Shared\GlobalExceptionHandlingExtensions.cs" />
+  </ItemGroup>
+
 </Project>

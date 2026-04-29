@@ -6,6 +6,11 @@ obj/
 *.suo
 *.log
 *.db
-src/frontend/node_modules/
-src/frontend/dist/
-src/frontend/*.tsbuildinfo
+src/frontend/react/node_modules/
+src/frontend/react/dist/
+src/frontend/react/*.tsbuildinfo
+src/frontend/angular/node_modules/
+src/frontend/angular/dist/
+src/frontend/angular/.angular/
+src/frontend/vue/node_modules/
+src/frontend/vue/dist/

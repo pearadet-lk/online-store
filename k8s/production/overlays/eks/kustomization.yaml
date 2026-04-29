@@ -1,0 +1,38 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+patches:
+  - path: patch-ingress.yaml
+  - path: patch-serviceaccount.yaml
+
+images:
+  - name: ghcr.io/your-org/online-store-gateway
+    newName: <aws_account_id>.dkr.ecr.<region>.amazonaws.com/online-store-gateway
+    newTag: "1.0.0"
+  - name: ghcr.io/your-org/online-store-order-service
+    newName: <aws_account_id>.dkr.ecr.<region>.amazonaws.com/online-store-order-service
+    newTag: "1.0.0"
+  - name: ghcr.io/your-org/online-store-payment-service
+    newName: <aws_account_id>.dkr.ecr.<region>.amazonaws.com/online-store-payment-service
+    newTag: "1.0.0"
+  - name: ghcr.io/your-org/online-store-product-service
+    newName: <aws_account_id>.dkr.ecr.<region>.amazonaws.com/online-store-product-service
+    newTag: "1.0.0"
+  - name: ghcr.io/your-org/online-store-cart-service
+    newName: <aws_account_id>.dkr.ecr.<region>.amazonaws.com/online-store-cart-service
+    newTag: "1.0.0"
+  - name: ghcr.io/your-org/online-store-user-service
+    newName: <aws_account_id>.dkr.ecr.<region>.amazonaws.com/online-store-user-service
+    newTag: "1.0.0"
+  - name: ghcr.io/your-org/online-store-inventory-service
+    newName: <aws_account_id>.dkr.ecr.<region>.amazonaws.com/online-store-inventory-service
+    newTag: "1.0.0"
+  - name: ghcr.io/your-org/online-store-shipping-service
+    newName: <aws_account_id>.dkr.ecr.<region>.amazonaws.com/online-store-shipping-service
+    newTag: "1.0.0"
+  - name: ghcr.io/your-org/online-store-history-service
+    newName: <aws_account_id>.dkr.ecr.<region>.amazonaws.com/online-store-history-service
+    newTag: "1.0.0"

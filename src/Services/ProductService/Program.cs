@@ -8,6 +8,7 @@ using ProductService;
 using Serilog;
 using Serilog.Context;
 using Serilog.Sinks.Elasticsearch;
+using Shared;
 
 const string ServiceName = "product-service";
 
@@ -68,6 +69,8 @@ builder.Services.AddSwaggerGen();
         app.UseSwaggerUI();
     }
 
+    app.UseGlobalExceptionHandling(ServiceName);
+
     app.Use(async (context, next) =>
     {
         var traceId = Activity.Current?.TraceId.ToString() ?? context.TraceIdentifier;
@@ -112,8 +115,7 @@ builder.Services.AddSwaggerGen();
     {
         if (!string.IsNullOrWhiteSpace(opts.ConnectionString))
         {
-            var list = await PostgresCatalog.ListAsync(opts.ConnectionString, null, ct);
-            var match = list.FirstOrDefault(x => x.ProductId == productId);
+            var match = await PostgresCatalog.GetByIdAsync(opts.ConnectionString, productId, includeInactive: false, ct);
             return match is null ? Results.NotFound() : Results.Ok(match);
         }
 
@@ -122,11 +124,36 @@ builder.Services.AddSwaggerGen();
             : Results.NotFound();
     });
 
-    app.MapPost("/products", (ProductDto request, ProductStore store, CatalogOptions opts) =>
+    app.MapGet("/admin/products", async (string? q, ProductStore store, CatalogOptions opts, CancellationToken ct) =>
     {
         if (!string.IsNullOrWhiteSpace(opts.ConnectionString))
         {
-            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+            var list = await PostgresCatalog.ListAsync(opts.ConnectionString, q, includeInactive: true, ct);
+            return Results.Ok(list);
+        }
+
+        var products = store.Products.Values.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            products = products.Where(x =>
+                x.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                x.Description.Contains(q, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return Results.Ok(products.OrderBy(x => x.Name));
+    });
+
+    app.MapPost("/products", async (ProductDto request, ProductStore store, CatalogOptions opts, CancellationToken ct) =>
+    {
+        if (request.Price < 0)
+        {
+            return Results.BadRequest(new { error = "Price must be greater than or equal to zero." });
+        }
+
+        if (!string.IsNullOrWhiteSpace(opts.ConnectionString))
+        {
+            var created = await PostgresCatalog.CreateAsync(opts.ConnectionString, request, ct);
+            return Results.Created($"/products/{created.ProductId}", created);
         }
 
         var product = request with
@@ -135,6 +162,50 @@ builder.Services.AddSwaggerGen();
         };
         store.Products[product.ProductId] = product;
         return Results.Created($"/products/{product.ProductId}", product);
+    });
+
+    app.MapPut("/products/{productId:guid}", async (Guid productId, ProductDto request, ProductStore store, CatalogOptions opts, CancellationToken ct) =>
+    {
+        if (request.Price < 0)
+        {
+            return Results.BadRequest(new { error = "Price must be greater than or equal to zero." });
+        }
+
+        if (!string.IsNullOrWhiteSpace(opts.ConnectionString))
+        {
+            var updated = await PostgresCatalog.UpdateAsync(
+                opts.ConnectionString,
+                productId,
+                request with { ProductId = productId },
+                ct);
+            return updated is null ? Results.NotFound() : Results.Ok(updated);
+        }
+
+        if (!store.Products.ContainsKey(productId))
+        {
+            return Results.NotFound();
+        }
+
+        var updatedProduct = request with { ProductId = productId };
+        store.Products[productId] = updatedProduct;
+        return Results.Ok(updatedProduct);
+    });
+
+    app.MapDelete("/products/{productId:guid}", async (Guid productId, ProductStore store, CatalogOptions opts, CancellationToken ct) =>
+    {
+        if (!string.IsNullOrWhiteSpace(opts.ConnectionString))
+        {
+            var deactivated = await PostgresCatalog.DeactivateAsync(opts.ConnectionString, productId, ct);
+            return deactivated ? Results.NoContent() : Results.NotFound();
+        }
+
+        if (!store.Products.TryGetValue(productId, out var existing))
+        {
+            return Results.NotFound();
+        }
+
+        store.Products[productId] = existing with { IsActive = false };
+        return Results.NoContent();
     });
 
     app.Run();

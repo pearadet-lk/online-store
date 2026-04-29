@@ -31,6 +31,34 @@ dotnet run --project src/Services/EmailService
 dotnet run --project src/Services/Gateway
 ```
 
+## Frontend apps
+
+This repository now contains three frontend projects:
+
+- React (existing): `src/frontend/react`
+- Angular (new): `src/frontend/angular` (Angular `20.x`, which is latest major minus one)
+- Vue (new): `src/frontend/vue` (Vue `3.x`)
+
+Run the Angular app:
+
+```powershell
+cd src/frontend/angular
+npm install
+npm start
+```
+
+Default Angular dev URL: `http://localhost:4200`
+
+Run the Vue app:
+
+```powershell
+cd src/frontend/vue
+npm install
+npm run dev
+```
+
+Default Vue dev URL: `http://localhost:5173`
+
 Gateway defaults:
 
 - Order Service: `http://localhost:5240`
@@ -58,6 +86,56 @@ Content-Type: application/json
 }
 ```
 
+## Sample transaction runners
+
+You now have two ready scripts to generate sample traffic:
+
+- PowerShell flow runner: `scripts/sample-order-and-checkout.ps1`
+- k6 load runner: `scripts/k6-order-checkout.js`
+
+### 1) PowerShell sample runner (30 direct order + 30 checkout)
+
+Default run (uses `http://localhost:5152` for gateway and `http://localhost:18082` for OrderService):
+
+```powershell
+.\scripts\sample-order-and-checkout.ps1
+```
+
+With custom URLs / transaction count:
+
+```powershell
+.\scripts\sample-order-and-checkout.ps1 `
+  -GatewayBaseUrl "http://localhost:8081" `
+  -OrderServiceBaseUrl "http://localhost:8082" `
+  -TransactionCount 30
+```
+
+### 2) k6 load runner (default 30 iterations)
+
+Default run:
+
+```powershell
+k6 run .\scripts\k6-order-checkout.js
+```
+
+With explicit environment variables (Docker Compose example):
+
+```powershell
+$env:GATEWAY_URL = "http://localhost:8081"
+$env:ORDER_URL = "http://localhost:8082"
+$env:VUS = "5"
+$env:ITERATIONS = "30"
+k6 run .\scripts\k6-order-checkout.js
+```
+
+With Minikube port-forwards:
+
+```powershell
+$env:GATEWAY_URL = "http://localhost:5152"
+$env:ORDER_URL = "http://localhost:18082"
+k6 run .\scripts\k6-order-checkout.js
+```
+
 ## Local run (Docker)
 
 ```powershell
@@ -70,24 +148,69 @@ or
 .\scripts\deploy-docker-local.ps1
 ```
 
-Ports:
+Final gateway URL after local Docker deploy:
 
-- Gateway: `http://localhost:8081`
-- Order Service: `http://localhost:8082`
-- Payment Service: `http://localhost:8083`
-- Product Service: `http://localhost:8084`
-- Cart Service: `http://localhost:8085`
-- User Service: `http://localhost:8086`
-- Inventory Service: `http://localhost:8087`
-- Shipping Service: `http://localhost:8088`
-- History Service: `http://localhost:8089`
-- Email Service: `http://localhost:8090`
-- Kafka broker: `localhost:9092`
-- Jaeger UI: `http://localhost:16686`
-- Prometheus: `http://localhost:9090`
-- Grafana: `http://localhost:3000` (admin/admin)
-- Elasticsearch: `http://localhost:9200`
-- Kibana: `http://localhost:5601`
+- `http://localhost:8081`
+
+### Accessing services (Docker Compose)
+
+Everything below is on your host (`localhost`) because `docker-compose.yml` publishes ports.
+
+
+| Component           | URL / host:port                                                                    |
+| ------------------- | ---------------------------------------------------------------------------------- |
+| Gateway (API entry) | `http://localhost:8081`                                                            |
+| Order Service       | `http://localhost:8082`                                                            |
+| Payment Service     | `http://localhost:8083`                                                            |
+| Product Service     | `http://localhost:8084`                                                            |
+| Cart Service        | `http://localhost:8085`                                                            |
+| User Service        | `http://localhost:8086`                                                            |
+| Inventory Service   | `http://localhost:8087`                                                            |
+| Shipping Service    | `http://localhost:8088`                                                            |
+| History Service     | `http://localhost:8089`                                                            |
+| Email Service       | `http://localhost:8090`                                                            |
+| PostgreSQL          | `localhost:5432` (user/password/db: `onlinestore` / `onlinestore` / `onlinestore`) |
+| Redis               | `localhost:6379`                                                                   |
+| Kafka broker        | `localhost:9092`                                                                   |
+| Jaeger UI           | `http://localhost:16686`                                                           |
+| Prometheus          | `http://localhost:9090`                                                            |
+| Grafana             | `http://localhost:3000` (admin/admin)                                              |
+| Elasticsearch       | `http://localhost:9200`                                                            |
+| Kibana              | `http://localhost:5601`                                                            |
+
+
+**Frontends (Docker):** the UI apps are not started by Compose. Run them locally (see [Frontend apps](#frontend-apps)). Point dev proxies at the gateway URL you use (`http://localhost:8081` when the stack runs in Docker, or `http://localhost:5152` when you run the gateway with `dotnet run`).
+
+## Kubernetes quick start (choose one)
+
+Minikube and Docker Desktop Kubernetes are separate clusters. Use one at a time.
+
+Docker Desktop Kubernetes:
+
+```powershell
+kubectl config use-context docker-desktop
+.\scripts\deploy-dockerdesktop-k8s.ps1
+```
+
+Minikube:
+
+```powershell
+minikube start
+.\scripts\deploy-minikube.ps1
+```
+
+Verify:
+
+```powershell
+curl http://localhost:5152/health
+```
+
+Stop:
+
+```powershell
+.\scripts\teardown-dockerdesktop-k8s.ps1   # if using docker-desktop
+.\scripts\teardown-minikube.ps1            # if using minikube
+```
 
 ## Observability stack
 
@@ -133,6 +256,10 @@ All services now expose:
 
 ## Local run (Minikube)
 
+> Minikube and Docker Desktop Kubernetes are separate clusters.
+> Enabling Kubernetes in Docker Desktop does not run Minikube inside Docker Desktop.
+> Use one context at a time (`minikube` or `docker-desktop`).
+
 Prerequisites:
 
 - Docker Desktop installed and running
@@ -146,7 +273,7 @@ Start Minikube:
 minikube start
 ```
 
-Deploy all services to Minikube:
+Deploy all services (app + monitoring stack) to Minikube:
 
 ```powershell
 .\scripts\deploy-minikube.ps1
@@ -162,6 +289,7 @@ This script:
 
 - builds all service images into Minikube Docker daemon
 - applies `k8s/minikube-all-in-one.yaml`
+- applies `k8s/minikube-monitoring.yaml` (Jaeger, Prometheus, Grafana, Elasticsearch, Kibana)
 - waits for deployments to become ready
 - prints gateway URL
 
@@ -169,7 +297,111 @@ Manual deploy alternative:
 
 ```powershell
 kubectl apply -f k8s/minikube-all-in-one.yaml
+kubectl apply -f k8s/minikube-monitoring.yaml
 minikube service gateway -n online-store --url
+```
+
+### Accessing services (Minikube)
+
+`k8s/minikube-all-in-one.yaml` + `k8s/minikube-monitoring.yaml` deploy backend workloads and monitoring tools. It still does **not** deploy frontend containers (React/Angular/Vue), so there is **no in-cluster frontend URL** until you add a frontend Deployment (for example nginx serving static build).
+
+
+| Component               | How to reach it from your PC                                                                                                                                                |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Gateway**             | **NodePort** `30081` on the Minikube node: `http://<minikube-ip>:30081` (`minikube ip`). Or open a tunnel and print a URL: `minikube service gateway -n online-store --url` |
+| **Other microservices** | **ClusterIP only** (no NodePort). Call them through the gateway, or use port-forward (examples below).                                                                      |
+| **Redis**               | ClusterIP only; use port-forward if you need it from the host.                                                                                                              |
+| **Jaeger / Prometheus / Grafana / ELK** | ClusterIP only; use port-forward for local browser access. |
+
+
+**Why the browser cannot open “the frontend” after Minikube deploy:** nothing in that manifest serves the UI. Start a frontend dev server on your machine and point it at the gateway (next paragraph).
+
+**Recommended: gateway port-forward so local dev proxies keep working**
+
+The Angular proxy and Vite proxies default to `http://localhost:5152`. After Minikube is up, forward the in-cluster gateway to that port (leave the terminal open):
+
+```powershell
+kubectl port-forward -n online-store svc/gateway 5152:8080
+```
+
+Final gateway URL after port-forward:
+
+- `http://localhost:5152`
+
+Then start Angular / Vue / React as usual; `/api` and `/health` requests go to Minikube’s gateway.
+
+### Final URLs after port-forward (Minikube)
+
+Use these port-forwards (leave terminals open):
+
+```powershell
+kubectl port-forward -n online-store svc/gateway 5152:8080
+kubectl port-forward -n online-store svc/product-service 18084:8080
+kubectl port-forward -n online-store svc/cart-service 18085:8080
+kubectl port-forward -n online-store svc/order-service 18082:8080
+kubectl port-forward -n online-store svc/payment-service 18083:8080
+kubectl port-forward -n online-store svc/user-service 18086:8080
+kubectl port-forward -n online-store svc/inventory-service 18087:8080
+kubectl port-forward -n online-store svc/shipping-service 18088:8080
+kubectl port-forward -n online-store svc/history-service 18089:8080
+kubectl port-forward -n online-store svc/jaeger 16686:16686
+kubectl port-forward -n online-store svc/prometheus 9090:9090
+kubectl port-forward -n online-store svc/grafana 3000:3000
+kubectl port-forward -n online-store svc/elasticsearch 9200:9200
+kubectl port-forward -n online-store svc/kibana 5601:5601
+```
+
+Access URLs from your PC:
+
+
+| Component                           | Final URL                                          |
+| ----------------------------------- | -------------------------------------------------- |
+| Gateway (BFF/API)                   | `http://localhost:5152`                            |
+| Product Service                     | `http://localhost:18084`                           |
+| Cart Service                        | `http://localhost:18085`                           |
+| Order Service                       | `http://localhost:18082`                           |
+| Payment Service                     | `http://localhost:18083`                           |
+| User Service                        | `http://localhost:18086`                           |
+| Inventory Service                   | `http://localhost:18087`                           |
+| Shipping Service                    | `http://localhost:18088`                           |
+| History Service                     | `http://localhost:18089`                           |
+| Jaeger UI                           | `http://localhost:16686`                           |
+| Prometheus                          | `http://localhost:9090`                            |
+| Grafana                             | `http://localhost:3000` (`admin` / `admin`)       |
+| Elasticsearch                       | `http://localhost:9200`                            |
+| Kibana                              | `http://localhost:5601`                            |
+| Angular frontend (local dev server) | `http://localhost:4200`                            |
+| React frontend (local dev server)   | `http://localhost:5173`                            |
+| Vue frontend (local dev server)     | `http://localhost:5174` (run separately from React) |
+
+
+**Alternative:** set the Vite gateway target when using React or Vue:
+
+```powershell
+$env:VITE_GATEWAY_TARGET = (minikube service gateway -n online-store --url).Trim()
+cd src/frontend/react   # or vue
+npm run dev
+```
+
+For Angular, either keep the port-forward to `5152:8080` above, or change `src/frontend/angular/proxy.conf.json` to the URL printed by `minikube service gateway -n online-store --url`.
+
+### Not included in Minikube deploy (current state)
+
+- Frontend container deployments (React/Angular/Vue) are not in Kubernetes yet.
+- Kafka broker + EmailService deployment are not in `k8s/minikube-all-in-one.yaml` yet.
+- Production manifests under `k8s/production/` are separate and not used by `deploy-minikube.ps1`.
+
+**Optional: hit individual services from the host** (replace local ports as you like):
+
+```powershell
+kubectl port-forward -n online-store svc/product-service 18084:8080
+kubectl port-forward -n online-store svc/cart-service 18085:8080
+kubectl port-forward -n online-store svc/order-service 18082:8080
+kubectl port-forward -n online-store svc/payment-service 18083:8080
+kubectl port-forward -n online-store svc/user-service 18086:8080
+kubectl port-forward -n online-store svc/inventory-service 18087:8080
+kubectl port-forward -n online-store svc/shipping-service 18088:8080
+kubectl port-forward -n online-store svc/history-service 18089:8080
 ```
 
 Stop/cleanup:
@@ -185,9 +417,61 @@ or using Make:
 make teardown-minikube
 ```
 
+## Local run (Docker Desktop Kubernetes)
+
+Prerequisites:
+
+- Docker Desktop installed and running
+- Kubernetes enabled in Docker Desktop
+- `kubectl` installed
+- current kube context set to `docker-desktop` (or let script warn you)
+
+Switch context:
+
+```powershell
+kubectl config use-context docker-desktop
+```
+
+Deploy all services (app + monitoring stack):
+
+```powershell
+.\scripts\deploy-dockerdesktop-k8s.ps1
+```
+
+or using Make:
+
+```powershell
+make deploy-dockerdesktop-k8s
+```
+
+This script:
+
+- builds all service images into your normal Docker daemon
+- applies `k8s/minikube-all-in-one.yaml`
+- applies `k8s/minikube-monitoring.yaml` (Jaeger, Prometheus, Grafana, Elasticsearch, Kibana)
+- waits for deployments to become ready
+- starts port-forwards automatically
+
+Final gateway URL after deploy:
+
+- `http://localhost:5152`
+
+Stop/cleanup:
+
+```powershell
+.\scripts\teardown-dockerdesktop-k8s.ps1
+```
+
+or using Make:
+
+```powershell
+make teardown-dockerdesktop-k8s
+```
+
 ## Production-oriented patterns included
 
 - Circuit breaker + retry on gateway downstream calls
 - Idempotent payment authorization by `Idempotency-Key`
 - API rate limiting policy on checkout and catalog endpoints
 - CI/CD baseline with Docker build and blue/green deployment placeholder
+

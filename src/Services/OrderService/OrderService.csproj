@@ -36,4 +36,8 @@
     <Protobuf Include="..\..\BuildingBlocks\Contracts\Protos\inventory.proto" GrpcServices="Client" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="..\..\BuildingBlocks\Shared\GlobalExceptionHandlingExtensions.cs" Link="Shared\GlobalExceptionHandlingExtensions.cs" />
+  </ItemGroup>
+
 </Project>

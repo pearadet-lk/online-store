@@ -1,0 +1,69 @@
+trigger:
+  branches:
+    include:
+      - deploy/aks
+
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  imageTag: $(Build.SourceVersion)
+  namespace: online-store
+  overlay: k8s/production/overlays/aks
+
+stages:
+  - stage: BuildAndPush
+    jobs:
+      - job: BuildPush
+        steps:
+          - checkout: self
+          - task: UseDotNet@2
+            inputs:
+              packageType: sdk
+              version: 10.0.x
+          - script: dotnet restore OnlineStore.sln
+          - script: dotnet build OnlineStore.sln --configuration Release --no-restore
+          - task: Docker@2
+            displayName: Build and push gateway
+            inputs:
+              command: buildAndPush
+              repository: online-store-gateway
+              Dockerfile: src/Services/Gateway/Dockerfile
+              containerRegistry: $(azureContainerRegistryServiceConnection)
+              tags: |
+                $(imageTag)
+          - script: |
+              echo "Repeat Docker@2 step for all services (order/payment/product/cart/user/inventory/shipping/history)."
+            displayName: TODO all service images
+
+  - stage: DeployAKS
+    dependsOn: BuildAndPush
+    jobs:
+      - deployment: Deploy
+        environment: production
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: Kubernetes@1
+                  displayName: Apply AKS overlay
+                  inputs:
+                    connectionType: Kubernetes Service Connection
+                    kubernetesServiceEndpoint: $(aksServiceConnection)
+                    command: apply
+                    useConfigurationFile: true
+                    configurationType: inline
+                    inline: |
+                      apiVersion: v1
+                      kind: ConfigMap
+                      metadata:
+                        name: placeholder-inline
+                      data:
+                        note: "Replace this with kubectl apply -k via script step."
+                - script: |
+                    kubectl apply -k $(overlay)
+                    kubectl -n $(namespace) set image deployment/gateway gateway=$(acrLoginServer)/online-store-gateway:$(imageTag)
+                  displayName: Apply kustomize and update image

@@ -1,0 +1,44 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: online-store
+
+resources:
+  - namespace.yaml
+  - serviceaccount.yaml
+  - configmap.yaml
+  - secret.empty.yaml
+  - deployments.yaml
+  - services.yaml
+  - ingress.yaml
+  - hpa.yaml
+  - pdb.yaml
+
+images:
+  - name: online-store/gateway
+    newName: ghcr.io/your-org/online-store-gateway
+    newTag: "1.0.0"
+  - name: online-store/order-service
+    newName: ghcr.io/your-org/online-store-order-service
+    newTag: "1.0.0"
+  - name: online-store/payment-service
+    newName: ghcr.io/your-org/online-store-payment-service
+    newTag: "1.0.0"
+  - name: online-store/product-service
+    newName: ghcr.io/your-org/online-store-product-service
+    newTag: "1.0.0"
+  - name: online-store/cart-service
+    newName: ghcr.io/your-org/online-store-cart-service
+    newTag: "1.0.0"
+  - name: online-store/user-service
+    newName: ghcr.io/your-org/online-store-user-service
+    newTag: "1.0.0"
+  - name: online-store/inventory-service
+    newName: ghcr.io/your-org/online-store-inventory-service
+    newTag: "1.0.0"
+  - name: online-store/shipping-service
+    newName: ghcr.io/your-org/online-store-shipping-service
+    newTag: "1.0.0"
+  - name: online-store/history-service
+    newName: ghcr.io/your-org/online-store-history-service
+    newTag: "1.0.0"

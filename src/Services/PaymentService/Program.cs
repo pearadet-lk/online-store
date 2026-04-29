@@ -10,6 +10,7 @@ using Prometheus;
 using Serilog;
 using Serilog.Context;
 using Serilog.Sinks.Elasticsearch;
+using Shared;
 using Stripe;
 
 const string ServiceName = "payment-service";
@@ -54,6 +55,8 @@ builder.Services.AddSwaggerGen();
         app.UseSwagger();
         app.UseSwaggerUI();
     }
+
+    app.UseGlobalExceptionHandling(ServiceName);
 
     app.Use(async (context, next) =>
     {

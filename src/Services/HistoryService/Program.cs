@@ -7,6 +7,7 @@ using Prometheus;
 using Serilog;
 using Serilog.Context;
 using Serilog.Sinks.Elasticsearch;
+using Shared;
 
 const string ServiceName = "history-service";
 var builder = WebApplication.CreateBuilder(args);
@@ -47,6 +48,8 @@ if (app.Environment.IsDevelopment())
     app.UseSwagger();
     app.UseSwaggerUI();
 }
+
+app.UseGlobalExceptionHandling(ServiceName);
 
 app.Use(async (context, next) =>
 {

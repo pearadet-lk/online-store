@@ -7,6 +7,7 @@ using Prometheus;
 using Serilog;
 using Serilog.Context;
 using Serilog.Sinks.Elasticsearch;
+using Shared;
 
 const string ServiceName = "order-service";
 
@@ -50,6 +51,8 @@ try
         app.UseSwagger();
         app.UseSwaggerUI();
     }
+
+    app.UseGlobalExceptionHandling(ServiceName);
 
     app.Use(async (context, next) =>
     {

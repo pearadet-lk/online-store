@@ -1,0 +1,188 @@
+<main>
+  <h1>Online Store (Angular - Gateway)</h1>
+  <p class="subtitle">
+    Admin can manage products, and users can search/select product quantities before checkout.
+  </p>
+
+  <p class="error" *ngIf="error">{{ error }}</p>
+
+  <section>
+    <h2>Login</h2>
+    <p class="message" *ngIf="loginMessage">{{ loginMessage }}</p>
+    <form class="login-form" (submit)="$event.preventDefault(); login()">
+      <label>
+        Email
+        <input
+          type="email"
+          [value]="loginEmail"
+          (input)="loginEmail = $any($event.target).value"
+          required />
+      </label>
+      <label>
+        Password
+        <input
+          type="password"
+          [value]="loginPassword"
+          (input)="loginPassword = $any($event.target).value"
+          required />
+      </label>
+      <div class="row-actions">
+        <button type="submit" [disabled]="loginBusy">
+          {{ loginBusy ? 'Logging in...' : 'Login' }}
+        </button>
+        <button type="button" [disabled]="!isAuthenticated" (click)="logout()">Logout</button>
+      </div>
+    </form>
+    <p *ngIf="isAuthenticated && currentUser">
+      Logged in user: <strong>{{ currentUser.fullName }}</strong> ({{ currentUser.email }})
+    </p>
+  </section>
+
+  <section>
+    <h2>Register</h2>
+    <p class="message" *ngIf="registerMessage">{{ registerMessage }}</p>
+    <form class="login-form" (submit)="$event.preventDefault(); register()">
+      <label>
+        Full name
+        <input
+          type="text"
+          [value]="registerFullName"
+          (input)="registerFullName = $any($event.target).value"
+          required />
+      </label>
+      <label>
+        Email
+        <input
+          type="email"
+          [value]="registerEmail"
+          (input)="registerEmail = $any($event.target).value"
+          required />
+      </label>
+      <label>
+        Password
+        <input
+          type="password"
+          [value]="registerPassword"
+          (input)="registerPassword = $any($event.target).value"
+          required />
+      </label>
+      <div class="row-actions">
+        <button type="submit" [disabled]="registerBusy">
+          {{ registerBusy ? 'Registering...' : 'Register' }}
+        </button>
+      </div>
+    </form>
+  </section>
+
+  <section>
+    <h2>Admin Product Management</h2>
+    <p *ngIf="!isAuthenticated">Login required for admin product management.</p>
+    <ng-container *ngIf="isAuthenticated">
+    <p class="message" *ngIf="adminMessage">{{ adminMessage }}</p>
+    <form class="admin-form" (submit)="$event.preventDefault(); saveProduct()">
+      <label>
+        Name
+        <input
+          type="text"
+          [value]="adminForm.name"
+          (input)="adminForm.name = $any($event.target).value"
+          required />
+      </label>
+      <label>
+        Description
+        <input
+          type="text"
+          [value]="adminForm.description"
+          (input)="adminForm.description = $any($event.target).value" />
+      </label>
+      <label>
+        Price
+        <input
+          type="number"
+          min="0"
+          step="0.01"
+          [value]="adminForm.price"
+          (input)="adminForm.price = +$any($event.target).value" />
+      </label>
+      <label class="active-checkbox">
+        <input
+          type="checkbox"
+          [checked]="adminForm.isActive ?? true"
+          (change)="adminForm.isActive = $any($event.target).checked" />
+        Active
+      </label>
+      <div class="row-actions">
+        <button type="submit">{{ editingProductId ? 'Update product' : 'Create product' }}</button>
+        <button type="button" (click)="startCreateProduct()">Reset</button>
+      </div>
+    </form>
+
+    <p *ngIf="adminLoading">Loading admin products...</p>
+    <ul *ngIf="!adminLoading">
+      <li *ngFor="let product of adminProducts">
+        <span>
+          <strong>{{ product.name }}</strong>
+          ({{ product.isActive ? 'Active' : 'Inactive' }}) - ${{ formatPrice(product.price) }}
+        </span>
+        <div class="row-actions">
+          <button type="button" (click)="startEditProduct(product)">Edit</button>
+          <button type="button" [disabled]="!product.isActive" (click)="deactivateProduct(product)">
+            Deactivate
+          </button>
+        </div>
+      </li>
+    </ul>
+    </ng-container>
+  </section>
+
+  <section>
+    <h2>Catalog</h2>
+    <form class="search-form" (submit)="$event.preventDefault(); onSearch()">
+      <input
+        type="text"
+        placeholder="Search by name or description"
+        [value]="searchTerm"
+        (input)="searchTerm = $any($event.target).value" />
+      <button type="submit">Search</button>
+    </form>
+    <p *ngIf="loading">Loading...</p>
+    <ul *ngIf="!loading">
+      <li *ngFor="let product of products">
+        <span>
+          <strong>{{ product.name }}</strong> - ${{ formatPrice(product.price) }}
+        </span>
+        <div class="row-actions">
+          <input
+            type="number"
+            min="1"
+            [value]="selectedQuantities[product.productId] ?? 1"
+            (input)="onQuantityChange(product.productId, $any($event.target).value)" />
+          <button type="button" (click)="addToCart(product, selectedQuantities[product.productId] ?? 1)">
+            Add to cart
+          </button>
+        </div>
+      </li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Cart</h2>
+    <p *ngIf="!isAuthenticated">Login required to persist cart and checkout.</p>
+    <p *ngIf="cart.length === 0">Empty</p>
+    <ul *ngIf="cart.length > 0">
+      <li *ngFor="let item of cart">
+        <span>{{ item.productId }}</span>
+        <span>qty {{ item.quantity }} @ ${{ formatPrice(item.unitPrice) }}</span>
+      </li>
+    </ul>
+    <p><strong>Total:</strong> ${{ formatPrice(cartSummary) }}</p>
+    <button type="button" [disabled]="checkoutBusy" (click)="checkout()">
+      {{ checkoutBusy ? 'Checking out...' : 'Checkout' }}
+    </button>
+  </section>
+
+  <section *ngIf="checkoutResult">
+    <h2>Last checkout</h2>
+    <pre>{{ checkoutResult | json }}</pre>
+  </section>
+</main>

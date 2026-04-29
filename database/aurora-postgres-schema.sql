@@ -11,6 +11,7 @@ CREATE SCHEMA IF NOT EXISTS payment_service;
 CREATE SCHEMA IF NOT EXISTS inventory_service;
 CREATE SCHEMA IF NOT EXISTS shipping_service;
 CREATE SCHEMA IF NOT EXISTS history_service;
+CREATE SCHEMA IF NOT EXISTS gateway_service;
 
 -- ============================================================================
 -- User Service
@@ -25,6 +26,23 @@ CREATE TABLE IF NOT EXISTS user_service.users (
 );
 
 CREATE INDEX IF NOT EXISTS idx_user_email ON user_service.users (email);
+
+CREATE TABLE IF NOT EXISTS user_service.refresh_tokens (
+    token_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL,
+    token_hash VARCHAR(128) NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    replaced_by_token_hash VARCHAR(128) NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_refresh_tokens_user
+    ON user_service.refresh_tokens (user_id, expires_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_user_refresh_tokens_active
+    ON user_service.refresh_tokens (token_hash, expires_at)
+    WHERE revoked_at IS NULL;
 
 -- ============================================================================
 -- Product Service
@@ -190,6 +208,22 @@ CREATE TABLE IF NOT EXISTS history_service.order_history (
 
 CREATE INDEX IF NOT EXISTS idx_history_user_created
     ON history_service.order_history (user_id, created_at DESC);
+
+-- ============================================================================
+-- Gateway Service (checkout idempotency persistence)
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS gateway_service.checkout_idempotency (
+    scoped_key VARCHAR(512) PRIMARY KEY,
+    request_hash VARCHAR(128) NOT NULL,
+    in_progress BOOLEAN NOT NULL DEFAULT FALSE,
+    response_status_code INT NULL,
+    response_body TEXT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_gateway_checkout_idempotency_expires_at
+    ON gateway_service.checkout_idempotency (expires_at);
 
 -- ============================================================================
 -- Cross-schema FK note:

@@ -1,6 +1,8 @@
 using System.Net;
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using System.Threading.RateLimiting;
@@ -9,7 +11,10 @@ using Contracts;
 using Contracts.Grpc;
 using Grpc.Core;
 using Microsoft.AspNetCore.RateLimiting;
+using Gateway;
 using Microsoft.Extensions.Caching.Distributed;
+using Microsoft.IdentityModel.Tokens;
+using Npgsql;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Polly;
@@ -19,6 +24,7 @@ using Prometheus;
 using Serilog;
 using Serilog.Context;
 using Serilog.Sinks.Elasticsearch;
+using Shared;
 
 const string ServiceName = "gateway";
 
@@ -54,19 +60,30 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
     builder.Services.AddSingleton<EmailNotificationPublisher>();
     builder.Services.AddSingleton<CheckoutSagaStore>();
-    builder.Services.AddSingleton<CheckoutIdempotencyStore>();
-    var idempotencyRedisConnection = builder.Configuration["Idempotency:RedisConnectionString"];
-    if (!string.IsNullOrWhiteSpace(idempotencyRedisConnection))
+    var idempotencyPostgresConnection = builder.Configuration["Idempotency:PostgresConnectionString"];
+    if (!string.IsNullOrWhiteSpace(idempotencyPostgresConnection))
     {
-        builder.Services.AddStackExchangeRedisCache(options =>
-        {
-            options.Configuration = idempotencyRedisConnection;
-            options.InstanceName = "online-store:";
-        });
+        builder.Services.AddSingleton(_ =>
+            new NpgsqlDataSourceBuilder(idempotencyPostgresConnection).Build());
+        builder.Services.AddSingleton<ICheckoutIdempotencyStore, PostgresCheckoutIdempotencyStore>();
     }
     else
     {
-        builder.Services.AddDistributedMemoryCache();
+        var idempotencyRedisConnection = builder.Configuration["Idempotency:RedisConnectionString"];
+        if (!string.IsNullOrWhiteSpace(idempotencyRedisConnection))
+        {
+            builder.Services.AddStackExchangeRedisCache(options =>
+            {
+                options.Configuration = idempotencyRedisConnection;
+                options.InstanceName = "online-store:";
+            });
+        }
+        else
+        {
+            builder.Services.AddDistributedMemoryCache();
+        }
+
+        builder.Services.AddSingleton<ICheckoutIdempotencyStore, DistributedCacheCheckoutIdempotencyStore>();
     }
     builder.Services.AddSingleton<IAsyncPolicy<InventoryOperationReply>>(serviceProvider =>
     {
@@ -151,6 +168,8 @@ builder.Services.AddSwaggerGen();
         app.UseSwaggerUI();
     }
 
+    app.UseGlobalExceptionHandling(ServiceName);
+
     app.Use(async (context, next) =>
     {
         var traceId = Activity.Current?.TraceId.ToString() ?? context.TraceIdentifier;
@@ -185,6 +204,109 @@ builder.Services.AddSwaggerGen();
     })
     .RequireRateLimiting("catalog");
 
+    app.MapPost("/api/users/login", async (HttpRequest incoming, IHttpClientFactory httpClientFactory, CancellationToken ct) =>
+    {
+        var client = httpClientFactory.CreateClient("UserService");
+        using var reader = new StreamReader(incoming.Body);
+        var body = await reader.ReadToEndAsync(ct);
+        using var content = new StringContent(body, Encoding.UTF8, incoming.ContentType ?? "application/json");
+        var response = await client.PostAsync("/users/login", content, ct);
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+        return Results.Content(
+            responseBody,
+            contentType: response.Content.Headers.ContentType?.MediaType ?? "application/json",
+            statusCode: (int)response.StatusCode);
+    });
+
+    app.MapPost("/api/users/register", async (HttpRequest incoming, IHttpClientFactory httpClientFactory, CancellationToken ct) =>
+    {
+        var client = httpClientFactory.CreateClient("UserService");
+        using var reader = new StreamReader(incoming.Body);
+        var body = await reader.ReadToEndAsync(ct);
+        using var content = new StringContent(body, Encoding.UTF8, incoming.ContentType ?? "application/json");
+        var response = await client.PostAsync("/users/register", content, ct);
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+        return Results.Content(
+            responseBody,
+            contentType: response.Content.Headers.ContentType?.MediaType ?? "application/json",
+            statusCode: (int)response.StatusCode);
+    });
+
+    app.MapPost("/api/users/refresh", async (HttpRequest incoming, IHttpClientFactory httpClientFactory, CancellationToken ct) =>
+    {
+        var client = httpClientFactory.CreateClient("UserService");
+        using var reader = new StreamReader(incoming.Body);
+        var body = await reader.ReadToEndAsync(ct);
+        using var content = new StringContent(body, Encoding.UTF8, incoming.ContentType ?? "application/json");
+        var response = await client.PostAsync("/users/refresh", content, ct);
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+        return Results.Content(
+            responseBody,
+            contentType: response.Content.Headers.ContentType?.MediaType ?? "application/json",
+            statusCode: (int)response.StatusCode);
+    });
+
+    app.MapPost("/api/users/logout", async (HttpRequest incoming, IHttpClientFactory httpClientFactory, CancellationToken ct) =>
+    {
+        var client = httpClientFactory.CreateClient("UserService");
+        using var reader = new StreamReader(incoming.Body);
+        var body = await reader.ReadToEndAsync(ct);
+        using var content = new StringContent(body, Encoding.UTF8, incoming.ContentType ?? "application/json");
+        var response = await client.PostAsync("/users/logout", content, ct);
+        return Results.StatusCode((int)response.StatusCode);
+    });
+
+    app.MapGet("/api/admin/products", async (string? q, IHttpClientFactory httpClientFactory, CancellationToken ct) =>
+    {
+        var client = httpClientFactory.CreateClient("ProductService");
+        var path = string.IsNullOrWhiteSpace(q) ? "/admin/products" : $"/admin/products?q={Uri.EscapeDataString(q)}";
+        var response = await client.GetAsync(path, ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        return Results.Content(
+            body,
+            contentType: response.Content.Headers.ContentType?.MediaType ?? "application/json",
+            statusCode: (int)response.StatusCode);
+    });
+
+    app.MapPost("/api/admin/products", async (HttpRequest incoming, IHttpClientFactory httpClientFactory, CancellationToken ct) =>
+    {
+        var client = httpClientFactory.CreateClient("ProductService");
+        using var reader = new StreamReader(incoming.Body);
+        var body = await reader.ReadToEndAsync(ct);
+        using var content = new StringContent(body, Encoding.UTF8, incoming.ContentType ?? "application/json");
+        var response = await client.PostAsync("/products", content, ct);
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+        return Results.Content(
+            responseBody,
+            contentType: response.Content.Headers.ContentType?.MediaType ?? "application/json",
+            statusCode: (int)response.StatusCode);
+    });
+
+    app.MapPut("/api/admin/products/{productId:guid}", async (Guid productId, HttpRequest incoming, IHttpClientFactory httpClientFactory, CancellationToken ct) =>
+    {
+        var client = httpClientFactory.CreateClient("ProductService");
+        using var reader = new StreamReader(incoming.Body);
+        var body = await reader.ReadToEndAsync(ct);
+        using var content = new StringContent(body, Encoding.UTF8, incoming.ContentType ?? "application/json");
+        var response = await client.PutAsync($"/products/{productId}", content, ct);
+        var responseBody = await response.Content.ReadAsStringAsync(ct);
+        return Results.Content(
+            responseBody,
+            contentType: response.Content.Headers.ContentType?.MediaType ?? "application/json",
+            statusCode: (int)response.StatusCode);
+    });
+
+    app.MapDelete("/api/admin/products/{productId:guid}", async (Guid productId, IHttpClientFactory httpClientFactory, CancellationToken ct) =>
+    {
+        var client = httpClientFactory.CreateClient("ProductService");
+        var response = await client.DeleteAsync($"/products/{productId}", ct);
+        var body = await response.Content.ReadAsStringAsync(ct);
+        return Results.Content(
+            body,
+            contentType: response.Content.Headers.ContentType?.MediaType ?? "application/json",
+            statusCode: (int)response.StatusCode);
+    });
+
     app.MapGet("/api/carts/{userId:guid}", async (Guid userId, IHttpClientFactory httpClientFactory, CancellationToken ct) =>
     {
         var client = httpClientFactory.CreateClient("CartService");
@@ -218,13 +340,14 @@ builder.Services.AddSwaggerGen();
         IAsyncPolicy<InventoryOperationReply> inventoryPolicy,
         InventoryGrpcCallSettings inventoryGrpcSettings,
         CheckoutSagaStore sagaStore,
-        CheckoutIdempotencyStore checkoutIdempotencyStore,
+        ICheckoutIdempotencyStore checkoutIdempotencyStore,
         ILoggerFactory loggerFactory,
         EmailNotificationPublisher emailPublisher,
+        IConfiguration configuration,
         CancellationToken ct) =>
     {
         var logger = loggerFactory.CreateLogger("CheckoutSaga");
-        if (!TryGetAuthorizedUserId(context, out var authenticatedUserId))
+        if (!TryGetAuthorizedUserId(context, configuration, out var authenticatedUserId))
         {
             return Results.Unauthorized();
         }
@@ -596,7 +719,7 @@ static async Task CompensateReleaseInventory(
     }
 }
 
-static bool TryGetAuthorizedUserId(HttpContext context, out Guid userId)
+static bool TryGetAuthorizedUserId(HttpContext context, IConfiguration configuration, out Guid userId)
 {
     userId = Guid.Empty;
     if (!context.Request.Headers.TryGetValue("Authorization", out var authorization))
@@ -611,14 +734,39 @@ static bool TryGetAuthorizedUserId(HttpContext context, out Guid userId)
     }
 
     var token = headerValue["Bearer ".Length..].Trim();
-    const string prefix = "demo-jwt-";
-    if (!token.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+    if (string.IsNullOrWhiteSpace(token))
     {
         return false;
     }
 
-    var userIdPart = token[prefix.Length..];
-    return userIdPart.Length == 32 && Guid.TryParseExact(userIdPart, "N", out userId);
+    var jwtIssuer = configuration["Auth:JwtIssuer"] ?? "online-store";
+    var jwtAudience = configuration["Auth:JwtAudience"] ?? "online-store-clients";
+    var signingKey = configuration["Auth:JwtSigningKey"] ?? "dev-super-secret-signing-key-min-32-chars";
+
+    var tokenHandler = new JwtSecurityTokenHandler();
+    var validationParameters = new TokenValidationParameters
+    {
+        ValidateIssuer = true,
+        ValidIssuer = jwtIssuer,
+        ValidateAudience = true,
+        ValidAudience = jwtAudience,
+        ValidateIssuerSigningKey = true,
+        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey)),
+        ValidateLifetime = true,
+        ClockSkew = TimeSpan.FromSeconds(30)
+    };
+
+    try
+    {
+        var principal = tokenHandler.ValidateToken(token, validationParameters, out _);
+        var userIdClaim = principal.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? principal.FindFirstValue(JwtRegisteredClaimNames.Sub);
+        return Guid.TryParse(userIdClaim, out userId);
+    }
+    catch
+    {
+        return false;
+    }
 }
 
 static string ComputeCheckoutPayloadHash(CheckoutRequest request)
@@ -626,135 +774,6 @@ static string ComputeCheckoutPayloadHash(CheckoutRequest request)
     var payload = JsonSerializer.Serialize(request);
     return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
 }
-
-internal sealed class CheckoutIdempotencyStore(IDistributedCache cache, IConfiguration configuration)
-{
-    private readonly TimeSpan _ttl = TimeSpan.FromMinutes(Math.Clamp(configuration.GetValue("Idempotency:TtlMinutes", 1440), 1, 10080));
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _locks = new(StringComparer.Ordinal);
-
-    public async Task<CheckoutIdempotencyAcquireResult> TryAcquireAsync(string scopedKey, string requestHash, CancellationToken cancellationToken)
-    {
-        var gate = _locks.GetOrAdd(scopedKey, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken);
-        try
-        {
-            var existing = await ReadAsync(scopedKey, cancellationToken);
-            if (existing is not null && !string.Equals(existing.RequestHash, requestHash, StringComparison.Ordinal))
-            {
-                return new CheckoutIdempotencyAcquireResult(false, true, false, null, null);
-            }
-
-            if (existing is { InProgress: true })
-            {
-                return new CheckoutIdempotencyAcquireResult(false, false, true, null, null);
-            }
-
-            if (existing is { ResponseBody: not null })
-            {
-                return new CheckoutIdempotencyAcquireResult(false, false, false, existing.ResponseStatusCode, existing.ResponseBody);
-            }
-
-            var next = existing is null
-                ? new CheckoutIdempotencyRecord(requestHash, true, null, null, DateTimeOffset.UtcNow)
-                : existing with { InProgress = true, UpdatedAt = DateTimeOffset.UtcNow, RequestHash = requestHash };
-            await WriteAsync(scopedKey, next, cancellationToken);
-            return new CheckoutIdempotencyAcquireResult(true, false, false, null, null);
-        }
-        finally
-        {
-            gate.Release();
-        }
-    }
-
-    public async Task MarkFailedAsync(string scopedKey, CancellationToken cancellationToken)
-    {
-        var gate = _locks.GetOrAdd(scopedKey, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken);
-        try
-        {
-            var existing = await ReadAsync(scopedKey, cancellationToken);
-            if (existing is null)
-            {
-                return;
-            }
-
-            await WriteAsync(scopedKey, existing with
-            {
-                InProgress = false,
-                ResponseStatusCode = null,
-                ResponseBody = null,
-                UpdatedAt = DateTimeOffset.UtcNow
-            }, cancellationToken);
-        }
-        finally
-        {
-            gate.Release();
-        }
-    }
-
-    public async Task MarkCompletedAsync(string scopedKey, int statusCode, string responseBody, CancellationToken cancellationToken)
-    {
-        var gate = _locks.GetOrAdd(scopedKey, _ => new SemaphoreSlim(1, 1));
-        await gate.WaitAsync(cancellationToken);
-        try
-        {
-            var existing = await ReadAsync(scopedKey, cancellationToken);
-            if (existing is null)
-            {
-                return;
-            }
-
-            await WriteAsync(scopedKey, existing with
-            {
-                InProgress = false,
-                ResponseStatusCode = statusCode,
-                ResponseBody = responseBody,
-                UpdatedAt = DateTimeOffset.UtcNow
-            }, cancellationToken);
-        }
-        finally
-        {
-            gate.Release();
-        }
-    }
-
-    private async Task<CheckoutIdempotencyRecord?> ReadAsync(string scopedKey, CancellationToken cancellationToken)
-    {
-        var json = await cache.GetStringAsync(CacheKey(scopedKey), cancellationToken);
-        return string.IsNullOrWhiteSpace(json)
-            ? null
-            : JsonSerializer.Deserialize<CheckoutIdempotencyRecord>(json);
-    }
-
-    private Task WriteAsync(string scopedKey, CheckoutIdempotencyRecord record, CancellationToken cancellationToken)
-    {
-        var json = JsonSerializer.Serialize(record);
-        return cache.SetStringAsync(
-            CacheKey(scopedKey),
-            json,
-            new DistributedCacheEntryOptions
-            {
-                AbsoluteExpirationRelativeToNow = _ttl
-            },
-            cancellationToken);
-    }
-
-    private static string CacheKey(string scopedKey) => $"checkout:idempotency:{scopedKey}";
-}
-
-internal sealed record CheckoutIdempotencyAcquireResult(
-    bool Acquired,
-    bool PayloadMismatch,
-    bool InProgress,
-    int? ResponseStatusCode,
-    string? ResponseBody);
-
-internal sealed record CheckoutIdempotencyRecord(
-    string RequestHash,
-    bool InProgress,
-    int? ResponseStatusCode,
-    string? ResponseBody,
-    DateTimeOffset UpdatedAt);
 
 internal sealed class CheckoutSagaStore
 {
