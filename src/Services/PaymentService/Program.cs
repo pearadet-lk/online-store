@@ -70,18 +70,15 @@ builder.Services.AddSwaggerGen();
     });
     app.UseSerilogRequestLogging();
     app.UseHttpMetrics();
-app.Use(async (context, next) =>
-{
-    if (context.Request.Path.StartsWithSegments($"/api/{DefaultApiVersion}", out var remaining))
-    {
-        context.Request.Path = remaining.HasValue ? remaining : "/";
-    }
-
-    context.Response.Headers["api-supported-versions"] = DefaultApiVersion;
-    await next();
-});
+app.UseDefaultApiVersioning(DefaultApiVersion);
+app.UseRouting();
 
     app.MapGet("/health", (IConfiguration config) =>
+    {
+        var stripeConfigured = !string.IsNullOrWhiteSpace(config["Stripe:SecretKey"]);
+        return Results.Ok(new { service = "payment-service", status = "ok", stripe = stripeConfigured ? "live" : "mock" });
+    });
+    app.MapGet("/api/v1/health", (IConfiguration config) =>
     {
         var stripeConfigured = !string.IsNullOrWhiteSpace(config["Stripe:SecretKey"]);
         return Results.Ok(new { service = "payment-service", status = "ok", stripe = stripeConfigured ? "live" : "mock" });

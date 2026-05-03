@@ -43,7 +43,7 @@ async function loadProducts() {
   loading.value = true
   error.value = null
   try {
-    const res = await fetch('/api/products')
+    const res = await authenticatedFetch('/api/products')
     if (!res.ok) {
       throw new Error(`Products failed: ${res.status}`)
     }

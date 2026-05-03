@@ -183,7 +183,7 @@ export class App {
       }
 
       const query = params.toString();
-      const res = await fetch(query ? `/api/products?${query}` : '/api/products');
+      const res = await this.authenticatedFetch(query ? `/api/products?${query}` : '/api/products');
       if (!res.ok) {
         throw new Error(`Products failed: ${res.status}`);
       }

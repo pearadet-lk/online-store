@@ -25,6 +25,7 @@ data:
   Auth__JwtIssuer: online-store
   Auth__JwtAudience: online-store-clients
   Auth__JwtSigningKey: dev-super-secret-signing-key-min-32-chars
+  Auth__RefreshTokenDays: "7"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -289,6 +290,11 @@ spec:
                 configMapKeyRef:
                   name: gateway-config
                   key: Auth__JwtSigningKey
+            - name: Auth__RefreshTokenDays
+              valueFrom:
+                configMapKeyRef:
+                  name: gateway-config
+                  key: Auth__RefreshTokenDays
 ---
 apiVersion: v1
 kind: Service

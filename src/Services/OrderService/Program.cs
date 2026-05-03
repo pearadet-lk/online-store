@@ -66,18 +66,11 @@ try
     });
     app.UseSerilogRequestLogging();
     app.UseHttpMetrics();
-app.Use(async (context, next) =>
-{
-    if (context.Request.Path.StartsWithSegments($"/api/{DefaultApiVersion}", out var remaining))
-    {
-        context.Request.Path = remaining.HasValue ? remaining : "/";
-    }
-
-    context.Response.Headers["api-supported-versions"] = DefaultApiVersion;
-    await next();
-});
+app.UseDefaultApiVersioning(DefaultApiVersion);
+app.UseRouting();
 
     app.MapGet("/health", () => Results.Ok(new { service = "order-service", status = "ok" }));
+    app.MapGet("/api/v1/health", () => Results.Ok(new { service = "order-service", status = "ok" }));
     app.MapMetrics("/metrics");
 
     app.MapPost("/orders", (CreateOrderRequest request, OrderStore store) =>

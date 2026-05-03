@@ -59,7 +59,7 @@ builder.Services.AddSingleton(new UserAuthOptions(
     JwtAudience: builder.Configuration["Auth:JwtAudience"] ?? "online-store-clients",
     JwtSigningKey: builder.Configuration["Auth:JwtSigningKey"] ?? "dev-super-secret-signing-key-min-32-chars",
     AccessTokenMinutes: Math.Clamp(builder.Configuration.GetValue("Auth:AccessTokenMinutes", 15), 1, 120),
-    RefreshTokenDays: Math.Clamp(builder.Configuration.GetValue("Auth:RefreshTokenDays", 30), 1, 90)));
+    RefreshTokenDays: Math.Clamp(builder.Configuration.GetValue("Auth:RefreshTokenDays", 7), 1, 90)));
 
 var app = builder.Build();
 var options = app.Services.GetRequiredService<UserAuthOptions>();
@@ -100,16 +100,8 @@ app.Use(async (context, next) =>
 });
 app.UseSerilogRequestLogging();
 app.UseHttpMetrics();
-app.Use(async (context, next) =>
-{
-    if (context.Request.Path.StartsWithSegments($"/api/{DefaultApiVersion}", out var remaining))
-    {
-        context.Request.Path = remaining.HasValue ? remaining : "/";
-    }
-
-    context.Response.Headers["api-supported-versions"] = DefaultApiVersion;
-    await next();
-});
+app.UseDefaultApiVersioning(DefaultApiVersion);
+app.UseRouting();
 
 app.MapGet("/health", () => Results.Ok(new { service = "user-service", status = "ok" }));
 app.MapMetrics("/metrics");

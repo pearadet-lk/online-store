@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <Compile Include="..\..\BuildingBlocks\Shared\GlobalExceptionHandlingExtensions.cs" Link="Shared\GlobalExceptionHandlingExtensions.cs" />
+    <Compile Include="..\..\BuildingBlocks\Shared\ApiVersioningExtensions.cs" Link="Shared\ApiVersioningExtensions.cs" />
   </ItemGroup>
 
 </Project>

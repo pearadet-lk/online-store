@@ -16,3 +16,4 @@ data:
   Idempotency__TtlMinutes: "1440"
   Auth__JwtIssuer: online-store
   Auth__JwtAudience: online-store-clients
+  Auth__RefreshTokenDays: "7"

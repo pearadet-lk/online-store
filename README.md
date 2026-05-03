@@ -253,6 +253,18 @@ All services now expose:
   - `GET /email/status/{orderId}`
   - `GET /email/status`
 
+## JWT refresh token storage
+
+Refresh tokens are persisted in PostgreSQL schema `user_service` (table `refresh_tokens`) with:
+
+- `token_hash` (SHA-256 hash of token, never stores raw token)
+- `user_id`
+- `expires_at`
+- `revoked_at`
+- `replaced_by_token_hash` (for token rotation chain)
+
+Frontend apps (React, Angular, Vue) now uniformly handle backend `401` by calling `/api/users/refresh`, updating local session tokens, and retrying the original request once.
+
 ## gRPC between services
 
 - `Gateway` now calls `InventoryService` via gRPC for inventory check/reserve/release/commit.
@@ -260,6 +272,7 @@ All services now expose:
 ## Checkout saga at gateway
 
 - Gateway now enforces auth on checkout with `Authorization: Bearer demo-jwt-<userIdN>`.
+- JWT refresh token lifetime is `7` days by default (`Auth:RefreshTokenDays`, configurable).
 - Checkout endpoint is rate-limited (`checkout` policy) before saga execution.
 - Checkout idempotency is enforced by `Idempotency-Key` + `userId` + payload hash:
   - duplicate in-flight request returns conflict
