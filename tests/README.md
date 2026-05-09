@@ -44,6 +44,21 @@ Defaults point to launch settings ports. Override if needed:
 
 From repo root:
 
+### Quick helper script
+
+```powershell
+.\scripts\run-live-tests.ps1 -Suite e2e
+```
+
+Options:
+
+- `-Suite e2e|services|all` (default `e2e`)
+- optional URL overrides, e.g.:
+
+```powershell
+.\scripts\run-live-tests.ps1 -Suite all -GatewayUrl "http://localhost:5152"
+```
+
 ### Run all tests
 
 ```powershell

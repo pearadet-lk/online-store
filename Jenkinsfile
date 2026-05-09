@@ -26,6 +26,8 @@ pipeline {
       steps {
         sh 'dotnet restore OnlineStore.sln'
         sh 'dotnet build OnlineStore.sln --configuration Release --no-restore'
+        sh 'dotnet test tests/Gateway.Tests/Gateway.Tests.csproj --configuration Release --no-build'
+        sh 'dotnet test tests/EndToEnd.Tests/EndToEnd.Tests.csproj --configuration Release --no-build'
       }
     }
 
@@ -203,6 +205,33 @@ pipeline {
           update_image "shipping-service" "shipping-service" "online-store-shipping-service" "$CHANGED_SHIPPING"
           update_image "history-service" "history-service" "online-store-history-service" "$CHANGED_HISTORY"
           kubectl -n "$NAMESPACE" rollout status deployment/gateway --timeout=300s
+          kubectl -n "$NAMESPACE" port-forward svc/gateway 18080:8080 >/tmp/gateway-port-forward.log 2>&1 &
+          PF_PID=$!
+          trap "kill $PF_PID" EXIT
+          sleep 5
+          curl -fsS "http://127.0.0.1:18080/health"
+          curl -fsS "http://127.0.0.1:18080/api/docs"
+          PRODUCTS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:18080/api/products")
+          if [ "$PRODUCTS_STATUS" != "401" ]; then
+            echo "Expected /api/products to return 401 without JWT, got $PRODUCTS_STATUS"
+            exit 1
+          fi
+          LOGIN_RESPONSE=$(curl -fsS -X POST "http://127.0.0.1:18080/api/users/login" \
+            -H "Content-Type: application/json" \
+            -d '{"email":"demo@example.com","password":"demo-password"}')
+          ACCESS_TOKEN=$(python3 -c 'import json,sys;print(json.loads(sys.stdin.read()).get("accessToken",""))' <<<"$LOGIN_RESPONSE")
+          if [ -z "$ACCESS_TOKEN" ]; then
+            echo "Failed to obtain access token from gateway login response."
+            exit 1
+          fi
+          AUTH_PRODUCTS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: Bearer $ACCESS_TOKEN" \
+            "http://127.0.0.1:18080/api/products")
+          if [ "$AUTH_PRODUCTS_STATUS" != "200" ]; then
+            echo "Expected /api/products to return 200 with JWT, got $AUTH_PRODUCTS_STATUS"
+            exit 1
+          fi
+          kill $PF_PID
         '''
       }
     }

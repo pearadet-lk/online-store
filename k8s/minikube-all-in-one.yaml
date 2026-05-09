@@ -10,22 +10,21 @@ metadata:
   namespace: online-store
 data:
   ASPNETCORE_ENVIRONMENT: Development
-  Services__OrderServiceBaseUrl: http://order-service:8080
-  Services__PaymentServiceBaseUrl: http://payment-service:8080
-  Services__ProductServiceBaseUrl: http://product-service:8080
-  Services__CartServiceBaseUrl: http://cart-service:8080
-  Services__UserServiceBaseUrl: http://user-service:8080
-  Services__InventoryServiceGrpcUrl: http://inventory-service:8080
-  Services__ShippingServiceBaseUrl: http://shipping-service:8080
-  Services__HistoryServiceBaseUrl: http://history-service:8080
-  Idempotency__RedisConnectionString: redis:6379
-  Idempotency__TtlMinutes: "1440"
   ConnectionStrings__Catalog: Host=postgres;Port=5432;Database=onlinestore;Username=onlinestore;Password=onlinestore
   ConnectionStrings__Users: Host=postgres;Port=5432;Database=onlinestore;Username=onlinestore;Password=onlinestore
   Auth__JwtIssuer: online-store
   Auth__JwtAudience: online-store-clients
   Auth__JwtSigningKey: dev-super-secret-signing-key-min-32-chars
   Auth__RefreshTokenDays: "7"
+  ReverseProxy__Clusters__userCluster__Destinations__d1__Address: http://user-service:8080/
+  ReverseProxy__Clusters__productCluster__Destinations__d1__Address: http://product-service:8080/
+  ReverseProxy__Clusters__orderCluster__Destinations__d1__Address: http://order-service:8080/
+  ReverseProxy__Clusters__paymentCluster__Destinations__d1__Address: http://payment-service:8080/
+  ReverseProxy__Clusters__cartCluster__Destinations__d1__Address: http://cart-service:8080/
+  ReverseProxy__Clusters__inventoryCluster__Destinations__d1__Address: http://inventory-service:8080/
+  ReverseProxy__Clusters__shippingCluster__Destinations__d1__Address: http://shipping-service:8080/
+  ReverseProxy__Clusters__historyCluster__Destinations__d1__Address: http://history-service:8080/
+  ReverseProxy__Clusters__emailCluster__Destinations__d1__Address: http://email-service:8080/
 ---
 apiVersion: apps/v1
 kind: Deployment

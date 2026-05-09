@@ -1,0 +1,29 @@
+groups:
+  - name: gateway-alerts
+    rules:
+      - alert: GatewayHigh5xxRate
+        expr: sum(rate(http_requests_received_total{job="gateway",code=~"5.."}[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway 5xx rate is elevated"
+          description: "Gateway returns more than 0.5 5xx responses/sec over 5 minutes."
+
+      - alert: GatewayHigh429Rate
+        expr: sum(rate(http_requests_received_total{job="gateway",code="429"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway 429 rate is elevated"
+          description: "Gateway rate limiting may be too aggressive or traffic spike detected."
+
+      - alert: GatewayHighLatencyP95
+        expr: histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job="gateway"}[5m]))) > 1.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Gateway P95 latency is high"
+          description: "Gateway p95 latency is above 1.5s for 10 minutes."

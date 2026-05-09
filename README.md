@@ -59,40 +59,60 @@ npm run dev
 
 Default Vue dev URL: `http://localhost:5173`
 
-Gateway defaults:
+Gateway default URL:
 
-- Order Service: `http://localhost:5240`
-- Payment Service: `http://localhost:5031`
+- `http://localhost:5152`
 
-## Checkout endpoint
+## YARP gateway architecture
 
-Call via gateway:
+`Gateway` is now a YARP-based boundary gateway (proxy/security/observability layer), not a business-logic orchestrator.
 
-```http
-POST http://localhost:5152/api/checkout
-Idempotency-Key: order-123-attempt-1
-Content-Type: application/json
+Gateway responsibilities:
 
-{
-  "userId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-  "currency": "USD",
-  "items": [
-    {
-      "productId": "11111111-1111-1111-1111-111111111111",
-      "quantity": 1,
-      "unitPrice": 39.99
-    }
-  ]
-}
-```
+- route proxying to downstream services
+- JWT validation once at gateway
+- forwarding user claims in internal headers
+- correlation ID and request logging
+- rate limiting
+- health/docs/metrics endpoints
 
-Versioned form (recommended):
+Gateway does **not** implement order/payment/product business workflows.
 
-```http
-POST http://localhost:5152/api/v1/checkout
-Idempotency-Key: order-123-attempt-1
-Content-Type: application/json
-```
+### How routing works
+
+Gateway routes incoming `/api/*` calls to downstream services using YARP config in:
+
+- `src/Services/Gateway/ReverseProxy/yarp.json`
+
+Examples:
+
+- `/api/users/*` -> `UserService`
+- `/api/products/*` -> `ProductService`
+- `/api/orders/*` -> `OrderService`
+- `/api/payments/*` -> `PaymentService`
+- `/api/carts/*` -> `CartService`
+- `/api/inventory/*` -> `InventoryService`
+- `/api/shipments/*` -> `ShippingService`
+- `/api/history/*` -> `HistoryService`
+- `/api/email/*` -> `EmailService`
+
+### Authentication model
+
+- Public endpoints:
+  - `/api/users/login`
+  - `/api/users/register`
+  - `/api/users/refresh`
+- Other `/api/*` routes require valid `Authorization: Bearer <jwt>` at gateway.
+- Gateway forwards authenticated identity to downstream services via:
+  - `X-Authenticated-UserId`
+  - `X-Authenticated-Email`
+  - `X-Authenticated-Name`
+
+### Gateway-specific endpoints
+
+- `GET /health` -> gateway health
+- `GET /api/docs` -> aggregated list of downstream Swagger URLs
+- `GET /metrics` -> Prometheus metrics
 
 ## API versioning
 
@@ -269,26 +289,21 @@ Frontend apps (React, Angular, Vue) now uniformly handle backend `401` by callin
 
 - `Gateway` now calls `InventoryService` via gRPC for inventory check/reserve/release/commit.
 
-## Checkout saga at gateway
+## YARP verification checklist
 
-- Gateway now enforces auth on checkout with `Authorization: Bearer demo-jwt-<userIdN>`.
-- JWT refresh token lifetime is `7` days by default (`Auth:RefreshTokenDays`, configurable).
-- Checkout endpoint is rate-limited (`checkout` policy) before saga execution.
-- Checkout idempotency is enforced by `Idempotency-Key` + `userId` + payload hash:
-  - duplicate in-flight request returns conflict
-  - retry after successful completion returns cached response (prevents duplicate charges)
-  - key reuse with different payload returns conflict
-  - idempotency state is persisted in Redis (`Idempotency:RedisConnectionString`) with in-memory cache fallback if Redis is not configured
-- Saga flow:
-  - Step 1: Check inventory (gRPC)
-  - Step 2: Reserve inventory (gRPC)
-  - Step 3: Process payment (REST)
-  - Step 4: Confirm order
-- gRPC inventory calls use per-call deadline/timeout (default `3s`, configurable via `Services:InventoryGrpcTimeoutSeconds`) for faster retries and quicker circuit-breaker reaction.
-- Compensation on payment failure:
-  - Release inventory (gRPC)
-  - Mark order as failed
-- Saga state endpoint: `GET /api/checkout/sagas/{sagaId}`
+After deploy, verify:
+
+```powershell
+curl http://localhost:5152/health
+curl http://localhost:5152/api/docs
+curl -i http://localhost:5152/api/products
+```
+
+Expected:
+
+- `/health` returns `200`
+- `/api/docs` returns `200`
+- `/api/products` without JWT returns `401`
 
 ## Local run (Minikube)
 

@@ -23,22 +23,18 @@ services:
       ASPNETCORE_ENVIRONMENT: Development
       Observability__OtlpEndpoint: http://jaeger:4317
       Observability__ElasticsearchUrl: http://elasticsearch:9200
-      Messaging__Kafka__BootstrapServers: kafka:9092
-      Messaging__Kafka__Topic: email-notifications
-      Idempotency__PostgresConnectionString: Host=postgres;Port=5432;Database=onlinestore;Username=onlinestore;Password=onlinestore
-      Idempotency__TtlMinutes: 1440
-      Services__OrderServiceBaseUrl: http://order-service:8080
-      Services__PaymentServiceBaseUrl: http://payment-service:8080
-      Services__ProductServiceBaseUrl: http://product-service:8080
-      Services__CartServiceBaseUrl: http://cart-service:8080
-      Services__UserServiceBaseUrl: http://user-service:8080
-      Services__InventoryServiceGrpcUrl: http://inventory-service:8080
-      Services__InventoryGrpcTimeoutSeconds: 3
-      Services__ShippingServiceBaseUrl: http://shipping-service:8080
-      Services__HistoryServiceBaseUrl: http://history-service:8080
       Auth__JwtIssuer: online-store
       Auth__JwtAudience: online-store-clients
       Auth__JwtSigningKey: dev-super-secret-signing-key-min-32-chars
+      ReverseProxy__Clusters__userCluster__Destinations__d1__Address: http://user-service:8080/
+      ReverseProxy__Clusters__productCluster__Destinations__d1__Address: http://product-service:8080/
+      ReverseProxy__Clusters__orderCluster__Destinations__d1__Address: http://order-service:8080/
+      ReverseProxy__Clusters__paymentCluster__Destinations__d1__Address: http://payment-service:8080/
+      ReverseProxy__Clusters__cartCluster__Destinations__d1__Address: http://cart-service:8080/
+      ReverseProxy__Clusters__inventoryCluster__Destinations__d1__Address: http://inventory-service:8080/
+      ReverseProxy__Clusters__shippingCluster__Destinations__d1__Address: http://shipping-service:8080/
+      ReverseProxy__Clusters__historyCluster__Destinations__d1__Address: http://history-service:8080/
+      ReverseProxy__Clusters__emailCluster__Destinations__d1__Address: http://email-service:8080/
     ports:
       - "8081:8080"
     depends_on:
@@ -222,6 +218,7 @@ services:
       - "--config.file=/etc/prometheus/prometheus.yml"
     volumes:
       - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/gateway-alerts.yml:/etc/prometheus/gateway-alerts.yml:ro
     ports:
       - "9090:9090"
     depends_on:
@@ -235,6 +232,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
     ports:
       - "3000:3000"
     depends_on:

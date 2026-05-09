@@ -1,0 +1,291 @@
+{
+  "ReverseProxy": {
+    "Routes": {
+      "userLoginRoute": {
+        "ClusterId": "userCluster",
+        "AuthorizationPolicy": "Anonymous",
+        "Match": {
+          "Path": "/api/users/login"
+        },
+        "Transforms": [
+          { "PathRemovePrefix": "/api" }
+        ]
+      },
+      "userRegisterRoute": {
+        "ClusterId": "userCluster",
+        "AuthorizationPolicy": "Anonymous",
+        "Match": {
+          "Path": "/api/users/register"
+        },
+        "Transforms": [
+          { "PathRemovePrefix": "/api" }
+        ]
+      },
+      "userRefreshRoute": {
+        "ClusterId": "userCluster",
+        "AuthorizationPolicy": "Anonymous",
+        "Match": {
+          "Path": "/api/users/refresh"
+        },
+        "Transforms": [
+          { "PathRemovePrefix": "/api" }
+        ]
+      },
+      "userProtectedRoute": {
+        "ClusterId": "userCluster",
+        "AuthorizationPolicy": "authenticated",
+        "Match": {
+          "Path": "/api/users/{**catch-all}"
+        },
+        "Transforms": [
+          { "PathRemovePrefix": "/api" }
+        ]
+      },
+      "productRoute": {
+        "ClusterId": "productCluster",
+        "AuthorizationPolicy": "authenticated",
+        "Match": {
+          "Path": "/api/products/{**catch-all}"
+        },
+        "Transforms": [
+          { "PathRemovePrefix": "/api" }
+        ]
+      },
+      "adminProductRoute": {
+        "ClusterId": "productCluster",
+        "AuthorizationPolicy": "authenticated",
+        "Match": {
+          "Path": "/api/admin/products/{**catch-all}"
+        },
+        "Transforms": [
+          { "PathRemovePrefix": "/api" }
+        ]
+      },
+      "orderRoute": {
+        "ClusterId": "orderCluster",
+        "AuthorizationPolicy": "authenticated",
+        "Match": {
+          "Path": "/api/orders/{**catch-all}"
+        },
+        "Transforms": [
+          { "PathRemovePrefix": "/api" }
+        ]
+      },
+      "paymentRoute": {
+        "ClusterId": "paymentCluster",
+        "AuthorizationPolicy": "authenticated",
+        "Match": {
+          "Path": "/api/payments/{**catch-all}"
+        },
+        "Transforms": [
+          { "PathRemovePrefix": "/api" }
+        ]
+      },
+      "cartRoute": {
+        "ClusterId": "cartCluster",
+        "AuthorizationPolicy": "authenticated",
+        "Match": {
+          "Path": "/api/carts/{**catch-all}"
+        },
+        "Transforms": [
+          { "PathRemovePrefix": "/api" }
+        ]
+      },
+      "inventoryRoute": {
+        "ClusterId": "inventoryCluster",
+        "AuthorizationPolicy": "authenticated",
+        "Match": {
+          "Path": "/api/inventory/{**catch-all}"
+        },
+        "Transforms": [
+          { "PathRemovePrefix": "/api" }
+        ]
+      },
+      "shipmentRoute": {
+        "ClusterId": "shippingCluster",
+        "AuthorizationPolicy": "authenticated",
+        "Match": {
+          "Path": "/api/shipments/{**catch-all}"
+        },
+        "Transforms": [
+          { "PathRemovePrefix": "/api" }
+        ]
+      },
+      "historyRoute": {
+        "ClusterId": "historyCluster",
+        "AuthorizationPolicy": "authenticated",
+        "Match": {
+          "Path": "/api/history/{**catch-all}"
+        },
+        "Transforms": [
+          { "PathRemovePrefix": "/api" }
+        ]
+      },
+      "emailRoute": {
+        "ClusterId": "emailCluster",
+        "AuthorizationPolicy": "authenticated",
+        "Match": {
+          "Path": "/api/email/{**catch-all}"
+        },
+        "Transforms": [
+          { "PathRemovePrefix": "/api" }
+        ]
+      }
+    },
+    "Clusters": {
+      "userCluster": {
+        "HttpRequest": {
+          "ActivityTimeout": "00:00:10"
+        },
+        "HealthCheck": {
+          "Passive": {
+            "Enabled": true,
+            "Policy": "TransportFailureRateHealthPolicy",
+            "ReactivationPeriod": "00:00:15"
+          }
+        },
+        "Destinations": {
+          "d1": {
+            "Address": "http://localhost:5121/"
+          }
+        }
+      },
+      "productCluster": {
+        "HttpRequest": {
+          "ActivityTimeout": "00:00:10"
+        },
+        "HealthCheck": {
+          "Passive": {
+            "Enabled": true,
+            "Policy": "TransportFailureRateHealthPolicy",
+            "ReactivationPeriod": "00:00:15"
+          }
+        },
+        "Destinations": {
+          "d1": {
+            "Address": "http://localhost:5225/"
+          }
+        }
+      },
+      "orderCluster": {
+        "HttpRequest": {
+          "ActivityTimeout": "00:00:10"
+        },
+        "HealthCheck": {
+          "Passive": {
+            "Enabled": true,
+            "Policy": "TransportFailureRateHealthPolicy",
+            "ReactivationPeriod": "00:00:15"
+          }
+        },
+        "Destinations": {
+          "d1": {
+            "Address": "http://localhost:5240/"
+          }
+        }
+      },
+      "paymentCluster": {
+        "HttpRequest": {
+          "ActivityTimeout": "00:00:10"
+        },
+        "HealthCheck": {
+          "Passive": {
+            "Enabled": true,
+            "Policy": "TransportFailureRateHealthPolicy",
+            "ReactivationPeriod": "00:00:15"
+          }
+        },
+        "Destinations": {
+          "d1": {
+            "Address": "http://localhost:5031/"
+          }
+        }
+      },
+      "cartCluster": {
+        "HttpRequest": {
+          "ActivityTimeout": "00:00:10"
+        },
+        "HealthCheck": {
+          "Passive": {
+            "Enabled": true,
+            "Policy": "TransportFailureRateHealthPolicy",
+            "ReactivationPeriod": "00:00:15"
+          }
+        },
+        "Destinations": {
+          "d1": {
+            "Address": "http://localhost:5078/"
+          }
+        }
+      },
+      "inventoryCluster": {
+        "HttpRequest": {
+          "ActivityTimeout": "00:00:10"
+        },
+        "HealthCheck": {
+          "Passive": {
+            "Enabled": true,
+            "Policy": "TransportFailureRateHealthPolicy",
+            "ReactivationPeriod": "00:00:15"
+          }
+        },
+        "Destinations": {
+          "d1": {
+            "Address": "http://localhost:5212/"
+          }
+        }
+      },
+      "shippingCluster": {
+        "HttpRequest": {
+          "ActivityTimeout": "00:00:10"
+        },
+        "HealthCheck": {
+          "Passive": {
+            "Enabled": true,
+            "Policy": "TransportFailureRateHealthPolicy",
+            "ReactivationPeriod": "00:00:15"
+          }
+        },
+        "Destinations": {
+          "d1": {
+            "Address": "http://localhost:5219/"
+          }
+        }
+      },
+      "historyCluster": {
+        "HttpRequest": {
+          "ActivityTimeout": "00:00:10"
+        },
+        "HealthCheck": {
+          "Passive": {
+            "Enabled": true,
+            "Policy": "TransportFailureRateHealthPolicy",
+            "ReactivationPeriod": "00:00:15"
+          }
+        },
+        "Destinations": {
+          "d1": {
+            "Address": "http://localhost:5029/"
+          }
+        }
+      },
+      "emailCluster": {
+        "HttpRequest": {
+          "ActivityTimeout": "00:00:10"
+        },
+        "HealthCheck": {
+          "Passive": {
+            "Enabled": true,
+            "Policy": "TransportFailureRateHealthPolicy",
+            "ReactivationPeriod": "00:00:15"
+          }
+        },
+        "Destinations": {
+          "d1": {
+            "Address": "http://localhost:5164/"
+          }
+        }
+      }
+    }
+  }
+}
