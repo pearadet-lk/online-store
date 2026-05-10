@@ -39,6 +39,7 @@ $deployments = @(
     "shipping-service",
     "history-service",
     "jaeger",
+    "zipkin",
     "prometheus",
     "grafana",
     "elasticsearch",
@@ -46,19 +47,26 @@ $deployments = @(
 )
 
 foreach ($deployment in $deployments) {
-    Write-Host "Waiting for deployment/$deployment..." -ForegroundColor Yellow
-    kubectl rollout status deployment/$deployment -n online-store --timeout=180s
+    $rolloutTimeout = switch ($deployment) {
+        "elasticsearch" { "420s" }
+        "kibana" { "420s" }
+        Default { "240s" }
+    }
+    Write-Host "Waiting for deployment/$deployment (timeout $rolloutTimeout)..." -ForegroundColor Yellow
+    kubectl rollout status deployment/$deployment -n online-store --timeout=$rolloutTimeout
 }
 
 Write-Host "Starting all Minikube port-forwards..." -ForegroundColor Cyan
 & (Join-Path $PSScriptRoot "port-forward-minikube.ps1")
 
-$gatewayUrl = "http://localhost:5152"
 Write-Host "Minikube deployment completed." -ForegroundColor Green
-Write-Host "Gateway URL: $gatewayUrl" -ForegroundColor Green
+Write-Host "Primary API URL: http://localhost:5152 (gateway)" -ForegroundColor Green
+Write-Host "(Final localhost URLs also printed above by port-forward-minikube.ps1.)" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "Note: k8s/minikube-all-in-one.yaml does not deploy the React/Angular/Vue apps." -ForegroundColor Yellow
 Write-Host "  - Start a UI locally (see README Frontend apps)." -ForegroundColor Yellow
 Write-Host "  - Port-forwards are started automatically for gateway/services." -ForegroundColor Yellow
 Write-Host "  - Frontend dev proxies can use http://localhost:5152" -ForegroundColor Yellow
 Write-Host "  - Kafka and EmailService are not included in Minikube manifests yet." -ForegroundColor Yellow
+Write-Host "  - Run checkout simulator: .\scripts\run-checkout-simulator-minikube.ps1 (HTTP + Jaeger; Kafka off unless you add a broker)." -ForegroundColor Yellow
+Write-Host "  - Tunnel-only refresh: make restart-port-forward-minikube (if localhost:5152 refuses)." -ForegroundColor Yellow

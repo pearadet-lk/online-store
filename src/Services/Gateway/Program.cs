@@ -22,6 +22,9 @@ try
 {
     var builder = WebApplication.CreateBuilder(args);
     builder.Configuration.AddJsonFile("ReverseProxy/yarp.json", optional: false, reloadOnChange: true);
+    // Default host configuration loads env vars before this JSON file, so file wins unless we add env again.
+    // K8s/Compose set ReverseProxy__Clusters__*__Destinations__d1__Address to in-cluster DNS — must override yarp.json localhost.
+    builder.Configuration.AddEnvironmentVariables();
     builder.Host.UseSerilog((context, _, loggerConfiguration) =>
     {
         var elasticsearchUrl = context.Configuration["Observability:ElasticsearchUrl"] ?? "http://elasticsearch:9200";
@@ -42,10 +45,7 @@ try
         .WithTracing(tracing => tracing
             .AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
-            .AddOtlpExporter(options =>
-            {
-                options.Endpoint = new Uri(builder.Configuration["Observability:OtlpEndpoint"] ?? "http://jaeger:4317");
-            }));
+            .AddOnlineStoreTraceExporters(builder.Configuration));
     builder.Services.AddOpenApi();
     builder.Services.AddEndpointsApiExplorer();
     builder.Services.AddSwaggerGen();

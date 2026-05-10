@@ -44,6 +44,7 @@ $deployments = @(
     "shipping-service",
     "history-service",
     "jaeger",
+    "zipkin",
     "prometheus",
     "grafana",
     "elasticsearch",
@@ -51,8 +52,13 @@ $deployments = @(
 )
 
 foreach ($deployment in $deployments) {
-    Write-Host "Waiting for deployment/$deployment..." -ForegroundColor Yellow
-    kubectl rollout status deployment/$deployment -n online-store --timeout=180s
+    $rolloutTimeout = switch ($deployment) {
+        "elasticsearch" { "420s" }
+        "kibana" { "420s" }
+        Default { "240s" }
+    }
+    Write-Host "Waiting for deployment/$deployment (timeout $rolloutTimeout)..." -ForegroundColor Yellow
+    kubectl rollout status deployment/$deployment -n online-store --timeout=$rolloutTimeout
 }
 
 Write-Host "Starting Docker Desktop Kubernetes port-forwards..." -ForegroundColor Cyan
@@ -67,3 +73,4 @@ Write-Host "  - Start a UI locally (see README Frontend apps)." -ForegroundColor
 Write-Host "  - Port-forwards are started automatically for gateway/services." -ForegroundColor Yellow
 Write-Host "  - Frontend dev proxies can use http://localhost:5152" -ForegroundColor Yellow
 Write-Host "  - Kafka and EmailService are not included in this Kubernetes manifest yet." -ForegroundColor Yellow
+Write-Host "  - Tunnel-only refresh: make restart-port-forward-dockerdesktop-k8s (if localhost:5152 refuses)." -ForegroundColor Yellow

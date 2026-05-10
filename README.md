@@ -31,6 +31,27 @@ dotnet run --project src/Services/EmailService
 dotnet run --project src/Services/Gateway
 ```
 
+## Checkout simulator (Jaeger + Kafka)
+
+The **`tools/CheckoutSimulator`** console app logs in as the demo user, runs a realistic checkout through the gateway (cart, inventory, order, payment, shipping, history), exports **OTLP** traces (so you see the call chain in **Jaeger**), and publishes an **email notification** message to **Kafka** for `email-service` to process. See [tools/CheckoutSimulator/README.md](tools/CheckoutSimulator/README.md).
+
+```powershell
+docker compose up --build -d
+dotnet run --project tools/CheckoutSimulator/CheckoutSimulator.csproj
+# or: make run-checkout-simulator-docker   (same defaults: gateway 8081)
+```
+
+Default simulator settings target **Docker Compose** (gateway **`localhost:8081`**, OTLP **`4317`**, Kafka on). For **Minikube**, gateway traffic is **`localhost:5152`** after port-forward — use `.\scripts\run-checkout-simulator-minikube.ps1` or set `DOTNET_ENVIRONMENT=Minikube` so `appsettings.Minikube.json` applies. To flip stacks **without editing files**, set **`Gateway__BaseUrl`** (and for Minikube typically **`Simulator__PublishKafka=false`**). Details: [tools/CheckoutSimulator/README.md](tools/CheckoutSimulator/README.md#docker-compose-vs-minikube).
+
+**Minikube:** after `.\scripts\deploy-minikube.ps1` (or `make deploy-minikube`), port-forwards include gateway **5152** and Jaeger OTLP **4317**. The Minikube manifest set does not include Kafka, so the simulator disables Kafka publish unless you override `Simulator__PublishKafka`.
+
+```powershell
+.\scripts\run-checkout-simulator-minikube.ps1
+# or: make run-checkout-simulator-minikube
+```
+
+If **`5152` refuses connections**, stale tunnels are likely — **`make stop-port-forward-minikube`** then **`make port-forward-minikube`**, or **`make restart-port-forward-minikube`**. See [Minikube checkout checklist](#minikube-checkout-checklist).
+
 ## Frontend apps
 
 This repository now contains three frontend projects:
@@ -259,7 +280,7 @@ Stop:
 
 All services now expose:
 
-- distributed traces via OpenTelemetry exported to Jaeger (through OTLP)
+- distributed traces via OpenTelemetry exported to Jaeger (OTLP) and Zipkin (when `Observability:ZipkinEndpoint` is set; enabled in Docker Compose and the bundled Kubernetes manifests)
 - HTTP metrics at `/metrics` for Prometheus
 - structured Serilog logs with trace IDs, shipped to Elasticsearch
 - response `X-Trace-Id` header for quick request correlation
@@ -352,6 +373,23 @@ kubectl apply -f k8s/minikube-monitoring.yaml
 minikube service gateway -n online-store --url
 ```
 
+### Minikube checkout checklist
+
+Gateway (`5152`), checkout simulator, and Jaeger OTLP (`4317`):
+
+Stale **`kubectl port-forward`** sessions cause **connection refused** on `localhost:5152` or **`Skipping … already in use`** when scripts skip gateway.
+
+1. **`make stop-port-forward-minikube`** before reuse or redeploy (clears forwards tracked under `.port-forward/`).
+2. **`make deploy-minikube`** (builds, applies manifests, waits for rollouts, starts forwards) — or after manual **`kubectl apply`**, run **`make port-forward-minikube`**.
+3. **`curl http://localhost:5152/health`** should return **`200`**.
+4. **`make run-checkout-simulator-minikube`** — drives checkout via gateway + OTLP to Jaeger (Kafka stays off unless you configure it). **`scripts/run-checkout-simulator-minikube.ps1`** starts a **temporary `kubectl port-forward`** on **5152** when nothing is listening there (common with the Docker driver). Set **`SKIP_AUTO_GATEWAY_FORWARD=1`** to disable that behavior.
+
+**502 on `/api/...` while pods are Running:** If gateway logs show **`Proxying to http://localhost:5121/...`** inside the cluster, **`ReverseProxy/yarp.json`** overwrote **`ReverseProxy__Clusters__...`** env vars from **`gateway-config`**. Rebuild **`online-store/gateway:local`** from current **`Gateway/Program.cs`** (environment variables are reapplied after **`yarp.json`** so Minikube destinations stay **`http://user-service:8080/`**, etc.).
+
+**Tunnel-only refresh:** **`make restart-port-forward-minikube`** (runs **`scripts/stop-port-forward-minikube.ps1`** then **`scripts/port-forward-minikube.ps1`**) when the cluster is healthy but forwards exited.
+
+Deploy waits: **Elasticsearch** and **Kibana** rollouts allow **420s**; other deployments **240s** (see **`scripts/deploy-minikube.ps1`**).
+
 ### Accessing services (Minikube)
 
 `k8s/minikube-all-in-one.yaml` + `k8s/minikube-monitoring.yaml` deploy backend workloads and monitoring tools. It still does **not** deploy frontend containers (React/Angular/Vue), so there is **no in-cluster frontend URL** until you add a frontend Deployment (for example nginx serving static build).
@@ -383,47 +421,53 @@ Then start Angular / Vue / React as usual; `/api` and `/health` requests go to M
 
 ### Final URLs after port-forward (Minikube)
 
-Use these port-forwards (leave terminals open):
+**`.\scripts\deploy-minikube.ps1`** and **`make deploy-minikube`** finish by running **`scripts/port-forward-minikube.ps1`**, which prints the same localhost URLs to your terminal. **`make port-forward-minikube`** uses the same port map.
+
+These are the URLs when every forward starts successfully (the script skips any local port that is already in use):
+
+| Component | Final URL |
+| --------- | --------- |
+| Gateway (BFF/API) | `http://localhost:5152` |
+| Order service | `http://localhost:5240` |
+| Payment service | `http://localhost:5031` |
+| Product service | `http://localhost:5225` |
+| Cart service | `http://localhost:5078` |
+| User service | `http://localhost:5121` |
+| Inventory service | `http://localhost:5212` |
+| Shipping service | `http://localhost:5219` |
+| History service | `http://localhost:5029` |
+| Redis | `localhost:6379` |
+| Jaeger UI | `http://localhost:16686` |
+| Jaeger OTLP (gRPC; host tools / checkout-simulator) | `localhost:4317` |
+| Zipkin UI | `http://localhost:9411` |
+| Prometheus | `http://localhost:9090` |
+| Grafana | `http://localhost:3000` (`admin` / `admin`) |
+| Elasticsearch | `http://localhost:9200` |
+| Kibana | `http://localhost:5601` |
+
+Local frontends (not deployed to Minikube): Angular `http://localhost:4200`, React `http://localhost:5173`, Vue `http://localhost:5174`.
+
+Equivalent **`kubectl port-forward`** commands (one terminal each, or use the script):
 
 ```powershell
 kubectl port-forward -n online-store svc/gateway 5152:8080
-kubectl port-forward -n online-store svc/product-service 18084:8080
-kubectl port-forward -n online-store svc/cart-service 18085:8080
-kubectl port-forward -n online-store svc/order-service 18082:8080
-kubectl port-forward -n online-store svc/payment-service 18083:8080
-kubectl port-forward -n online-store svc/user-service 18086:8080
-kubectl port-forward -n online-store svc/inventory-service 18087:8080
-kubectl port-forward -n online-store svc/shipping-service 18088:8080
-kubectl port-forward -n online-store svc/history-service 18089:8080
+kubectl port-forward -n online-store svc/order-service 5240:8080
+kubectl port-forward -n online-store svc/payment-service 5031:8080
+kubectl port-forward -n online-store svc/product-service 5225:8080
+kubectl port-forward -n online-store svc/cart-service 5078:8080
+kubectl port-forward -n online-store svc/user-service 5121:8080
+kubectl port-forward -n online-store svc/inventory-service 5212:8080
+kubectl port-forward -n online-store svc/shipping-service 5219:8080
+kubectl port-forward -n online-store svc/history-service 5029:8080
+kubectl port-forward -n online-store svc/redis 6379:6379
 kubectl port-forward -n online-store svc/jaeger 16686:16686
+kubectl port-forward -n online-store svc/jaeger 4317:4317
+kubectl port-forward -n online-store svc/zipkin 9411:9411
 kubectl port-forward -n online-store svc/prometheus 9090:9090
 kubectl port-forward -n online-store svc/grafana 3000:3000
 kubectl port-forward -n online-store svc/elasticsearch 9200:9200
 kubectl port-forward -n online-store svc/kibana 5601:5601
 ```
-
-Access URLs from your PC:
-
-
-| Component                           | Final URL                                          |
-| ----------------------------------- | -------------------------------------------------- |
-| Gateway (BFF/API)                   | `http://localhost:5152`                            |
-| Product Service                     | `http://localhost:18084`                           |
-| Cart Service                        | `http://localhost:18085`                           |
-| Order Service                       | `http://localhost:18082`                           |
-| Payment Service                     | `http://localhost:18083`                           |
-| User Service                        | `http://localhost:18086`                           |
-| Inventory Service                   | `http://localhost:18087`                           |
-| Shipping Service                    | `http://localhost:18088`                           |
-| History Service                     | `http://localhost:18089`                           |
-| Jaeger UI                           | `http://localhost:16686`                           |
-| Prometheus                          | `http://localhost:9090`                            |
-| Grafana                             | `http://localhost:3000` (`admin` / `admin`)       |
-| Elasticsearch                       | `http://localhost:9200`                            |
-| Kibana                              | `http://localhost:5601`                            |
-| Angular frontend (local dev server) | `http://localhost:4200`                            |
-| React frontend (local dev server)   | `http://localhost:5173`                            |
-| Vue frontend (local dev server)     | `http://localhost:5174` (run separately from React) |
 
 
 **Alternative:** set the Vite gateway target when using React or Vue:
@@ -442,18 +486,7 @@ For Angular, either keep the port-forward to `5152:8080` above, or change `src/f
 - Kafka broker + EmailService deployment are not in `k8s/minikube-all-in-one.yaml` yet.
 - Production manifests under `k8s/production/` are separate and not used by `deploy-minikube.ps1`.
 
-**Optional: hit individual services from the host** (replace local ports as you like):
-
-```powershell
-kubectl port-forward -n online-store svc/product-service 18084:8080
-kubectl port-forward -n online-store svc/cart-service 18085:8080
-kubectl port-forward -n online-store svc/order-service 18082:8080
-kubectl port-forward -n online-store svc/payment-service 18083:8080
-kubectl port-forward -n online-store svc/user-service 18086:8080
-kubectl port-forward -n online-store svc/inventory-service 18087:8080
-kubectl port-forward -n online-store svc/shipping-service 18088:8080
-kubectl port-forward -n online-store svc/history-service 18089:8080
-```
+**Optional:** pick different local ports by editing **`scripts/port-forward-minikube.ps1`** or running your own `kubectl port-forward` mappings.
 
 Stop/cleanup:
 
@@ -506,6 +539,10 @@ This script:
 Final gateway URL after deploy:
 
 - `http://localhost:5152`
+
+**Checkout checklist:** if **`5152` refuses connections**, run **`make stop-port-forward-dockerdesktop-k8s`** then **`make port-forward-dockerdesktop-k8s`**, or **`make restart-port-forward-dockerdesktop-k8s`**. Confirm **`curl http://localhost:5152/health`**. Deploy uses **420s** rollout timeouts for Elasticsearch and Kibana, **240s** for other workloads.
+
+**Checkout simulator:** **`make run-checkout-simulator-dockerdesktop-k8s`** (alias of **`make run-checkout-simulator-minikube`**) — same **`localhost:5152`** / **`4317`** mapping as **`scripts/port-forward-dockerdesktop-k8s.ps1`**. Uses **`appsettings.Minikube.json`** only as a *host port profile* name; it applies to Docker Desktop Kubernetes too. Kafka stays off (manifest has no broker); gateway must include the **`ReverseProxy` env-after-JSON fix** in **`Gateway/Program.cs`** — rebuild images with **`deploy-dockerdesktop-k8s`** after pulling latest sources.
 
 Stop/cleanup:
 

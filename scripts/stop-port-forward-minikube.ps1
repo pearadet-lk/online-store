@@ -3,14 +3,14 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 $runtimeDir = Join-Path $root ".port-forward"
-$pidFile = Join-Path $runtimeDir "minikube-port-forwards.json"
+$forwardPidJson = Join-Path $runtimeDir "minikube-port-forwards.json"
 
-if (-not (Test-Path $pidFile)) {
-    Write-Host "No PID file found at $pidFile. Nothing to stop." -ForegroundColor Yellow
+if (-not (Test-Path $forwardPidJson)) {
+    Write-Host "No PID file found at $forwardPidJson. Nothing to stop." -ForegroundColor Yellow
     exit 0
 }
 
-$entries = Get-Content -Path $pidFile -Raw | ConvertFrom-Json
+$entries = Get-Content -Path $forwardPidJson -Raw | ConvertFrom-Json
 if ($entries -isnot [System.Array]) {
     $entries = @($entries)
 }
@@ -26,5 +26,5 @@ foreach ($entry in $entries) {
     Write-Host "Stopped $($entry.Service) (PID $($entry.Pid))." -ForegroundColor Green
 }
 
-Remove-Item -Path $pidFile -Force
+Remove-Item -Path $forwardPidJson -Force
 Write-Host "All tracked Minikube port-forwards are stopped." -ForegroundColor Green

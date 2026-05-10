@@ -6,6 +6,16 @@ metadata:
 apiVersion: v1
 kind: ConfigMap
 metadata:
+  name: observability-config
+  namespace: online-store
+data:
+  Observability__OtlpEndpoint: http://jaeger:4317
+  Observability__ZipkinEndpoint: http://zipkin:9411/api/v2/spans
+  Observability__ElasticsearchUrl: http://elasticsearch:9200
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
   name: gateway-config
   namespace: online-store
 data:
@@ -50,6 +60,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: gateway-config
+            - configMapRef:
+                name: observability-config
 ---
 apiVersion: v1
 kind: Service
@@ -86,6 +98,9 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: observability-config
           env:
             - name: ConnectionStrings__Catalog
               valueFrom:
@@ -166,6 +181,9 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: observability-config
 ---
 apiVersion: v1
 kind: Service
@@ -200,6 +218,9 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: observability-config
 ---
 apiVersion: v1
 kind: Service
@@ -234,6 +255,9 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: observability-config
 ---
 apiVersion: v1
 kind: Service
@@ -268,6 +292,9 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: observability-config
           env:
             - name: ConnectionStrings__Users
               valueFrom:
@@ -328,6 +355,9 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: observability-config
 ---
 apiVersion: v1
 kind: Service
@@ -362,6 +392,9 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: observability-config
 ---
 apiVersion: v1
 kind: Service
@@ -396,6 +429,9 @@ spec:
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: observability-config
 ---
 apiVersion: v1
 kind: Service

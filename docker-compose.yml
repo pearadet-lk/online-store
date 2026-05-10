@@ -22,6 +22,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       Observability__OtlpEndpoint: http://jaeger:4317
+      Observability__ZipkinEndpoint: http://zipkin:9411/api/v2/spans
       Observability__ElasticsearchUrl: http://elasticsearch:9200
       Auth__JwtIssuer: online-store
       Auth__JwtAudience: online-store-clients
@@ -60,6 +61,8 @@ services:
         condition: service_started
       jaeger:
         condition: service_started
+      zipkin:
+        condition: service_started
       elasticsearch:
         condition: service_healthy
       kafka:
@@ -72,6 +75,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       Observability__OtlpEndpoint: http://jaeger:4317
+      Observability__ZipkinEndpoint: http://zipkin:9411/api/v2/spans
       Observability__ElasticsearchUrl: http://elasticsearch:9200
       ConnectionStrings__Catalog: Host=postgres;Port=5432;Database=onlinestore;Username=onlinestore;Password=onlinestore
     ports:
@@ -87,6 +91,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       Observability__OtlpEndpoint: http://jaeger:4317
+      Observability__ZipkinEndpoint: http://zipkin:9411/api/v2/spans
       Observability__ElasticsearchUrl: http://elasticsearch:9200
     ports:
       - "8085:8080"
@@ -98,6 +103,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       Observability__OtlpEndpoint: http://jaeger:4317
+      Observability__ZipkinEndpoint: http://zipkin:9411/api/v2/spans
       Observability__ElasticsearchUrl: http://elasticsearch:9200
     ports:
       - "8082:8080"
@@ -109,6 +115,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       Observability__OtlpEndpoint: http://jaeger:4317
+      Observability__ZipkinEndpoint: http://zipkin:9411/api/v2/spans
       Observability__ElasticsearchUrl: http://elasticsearch:9200
       Stripe__SecretKey: ${STRIPE_SECRET_KEY:-}
     ports:
@@ -121,6 +128,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       Observability__OtlpEndpoint: http://jaeger:4317
+      Observability__ZipkinEndpoint: http://zipkin:9411/api/v2/spans
       Observability__ElasticsearchUrl: http://elasticsearch:9200
       ConnectionStrings__Users: Host=postgres;Port=5432;Database=onlinestore;Username=onlinestore;Password=onlinestore
       Auth__JwtIssuer: online-store
@@ -136,6 +144,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       Observability__OtlpEndpoint: http://jaeger:4317
+      Observability__ZipkinEndpoint: http://zipkin:9411/api/v2/spans
       Observability__ElasticsearchUrl: http://elasticsearch:9200
     ports:
       - "8087:8080"
@@ -147,6 +156,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       Observability__OtlpEndpoint: http://jaeger:4317
+      Observability__ZipkinEndpoint: http://zipkin:9411/api/v2/spans
       Observability__ElasticsearchUrl: http://elasticsearch:9200
     ports:
       - "8088:8080"
@@ -158,6 +168,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       Observability__OtlpEndpoint: http://jaeger:4317
+      Observability__ZipkinEndpoint: http://zipkin:9411/api/v2/spans
       Observability__ElasticsearchUrl: http://elasticsearch:9200
     ports:
       - "8089:8080"
@@ -169,6 +180,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Development
       Observability__OtlpEndpoint: http://jaeger:4317
+      Observability__ZipkinEndpoint: http://zipkin:9411/api/v2/spans
       Observability__ElasticsearchUrl: http://elasticsearch:9200
       Messaging__Kafka__BootstrapServers: kafka:9092
       Messaging__Kafka__Topic: email-notifications
@@ -211,6 +223,11 @@ services:
     ports:
       - "16686:16686"
       - "4317:4317"
+
+  zipkin:
+    image: openzipkin/zipkin:3.4
+    ports:
+      - "9411:9411"
 
   prometheus:
     image: prom/prometheus:v2.54.1

@@ -4,6 +4,9 @@ metadata:
   name: online-store-config
 data:
   ASPNETCORE_ENVIRONMENT: Production
+  Observability__OtlpEndpoint: http://jaeger:4317
+  Observability__ZipkinEndpoint: http://zipkin:9411/api/v2/spans
+  Observability__ElasticsearchUrl: http://elasticsearch:9200
   Auth__JwtIssuer: online-store
   Auth__JwtAudience: online-store-clients
   Auth__RefreshTokenDays: "7"

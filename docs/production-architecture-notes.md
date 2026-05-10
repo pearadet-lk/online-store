@@ -84,7 +84,7 @@ Monitor before full cutover:
 ## 7) Observability baseline
 
 - Logs: Serilog structured logs with trace/span correlation IDs.
-- Traces: OpenTelemetry with Jaeger (or AWS X-Ray if preferred).
+- Traces: OpenTelemetry with Jaeger (OTLP) and optional Zipkin HTTP export (`Observability:ZipkinEndpoint`), or AWS X-Ray if preferred.
 - Metrics: Prometheus + Grafana dashboards for checkout funnel.
 - Alerts: error budget burn, payment failure spike, queue backlog growth.
 
