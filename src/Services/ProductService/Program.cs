@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using Contracts;
 using OpenTelemetry.Resources;
@@ -38,25 +37,26 @@ try
             .AddHttpClientInstrumentation()
             .AddOnlineStoreTraceExporters(builder.Configuration));
     builder.Services.AddOpenApi();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-    builder.Services.AddSingleton<ProductStore>();
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen();
     builder.Services.AddSingleton(_ => new CatalogOptions(builder.Configuration.GetConnectionString("Catalog")));
+    builder.Services.AddSingleton<IProductRepositoryResolver, ProductRepositoryResolver>();
 
     var app = builder.Build();
 
-    var catalogConn = app.Services.GetRequiredService<CatalogOptions>().ConnectionString;
-    if (!string.IsNullOrWhiteSpace(catalogConn))
+    var resolver = app.Services.GetRequiredService<IProductRepositoryResolver>();
+    if (resolver.PostgresRepository is not null)
     {
         try
         {
-            await PostgresCatalog.EnsureSchemaAndSeedAsync(catalogConn, CancellationToken.None);
+            await resolver.PostgresRepository.EnsureSchemaAndSeedAsync(CancellationToken.None);
             app.Logger.LogInformation("Product catalog synchronized with PostgreSQL.");
         }
         catch (Exception ex)
         {
             app.Logger.LogWarning(ex, "PostgreSQL unavailable; falling back to in-memory catalog.");
             app.Services.GetRequiredService<CatalogOptions>().ConnectionString = null;
+            resolver.DisablePostgres();
         }
     }
 
@@ -80,8 +80,8 @@ builder.Services.AddSwaggerGen();
     });
     app.UseSerilogRequestLogging();
     app.UseHttpMetrics();
-app.UseDefaultApiVersioning(DefaultApiVersion);
-app.UseRouting();
+    app.UseDefaultApiVersioning(DefaultApiVersion);
+    app.UseRouting();
 
     app.MapGet("/health", (CatalogOptions opts) =>
         Results.Ok(new
@@ -92,119 +92,54 @@ app.UseRouting();
         }));
     app.MapMetrics("/metrics");
 
-    app.MapGet("/products", async (string? q, ProductStore store, CatalogOptions opts, CancellationToken ct) =>
+    app.MapGet("/products", async (string? q, IProductRepositoryResolver repositoryResolver, CancellationToken ct) =>
     {
-        if (!string.IsNullOrWhiteSpace(opts.ConnectionString))
-        {
-            var list = await PostgresCatalog.ListAsync(opts.ConnectionString, q, ct);
-            return Results.Ok(list);
-        }
-
-        var products = store.Products.Values.AsEnumerable();
-        if (!string.IsNullOrWhiteSpace(q))
-        {
-            products = products.Where(x =>
-                x.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                x.Description.Contains(q, StringComparison.OrdinalIgnoreCase));
-        }
-
-        return Results.Ok(products.OrderBy(x => x.Name));
+        var list = await repositoryResolver.Repository.ListAsync(q, includeInactive: false, ct);
+        return Results.Ok(list);
     });
 
-    app.MapGet("/products/{productId:guid}", async (Guid productId, ProductStore store, CatalogOptions opts, CancellationToken ct) =>
+    app.MapGet("/products/{productId:guid}", async (Guid productId, IProductRepositoryResolver repositoryResolver, CancellationToken ct) =>
     {
-        if (!string.IsNullOrWhiteSpace(opts.ConnectionString))
-        {
-            var match = await PostgresCatalog.GetByIdAsync(opts.ConnectionString, productId, includeInactive: false, ct);
-            return match is null ? Results.NotFound() : Results.Ok(match);
-        }
-
-        return store.Products.TryGetValue(productId, out var product)
-            ? Results.Ok(product)
-            : Results.NotFound();
+        var match = await repositoryResolver.Repository.GetByIdAsync(productId, includeInactive: false, ct);
+        return match is null ? Results.NotFound() : Results.Ok(match);
     });
 
-    app.MapGet("/admin/products", async (string? q, ProductStore store, CatalogOptions opts, CancellationToken ct) =>
+    app.MapGet("/admin/products", async (string? q, IProductRepositoryResolver repositoryResolver, CancellationToken ct) =>
     {
-        if (!string.IsNullOrWhiteSpace(opts.ConnectionString))
-        {
-            var list = await PostgresCatalog.ListAsync(opts.ConnectionString, q, includeInactive: true, ct);
-            return Results.Ok(list);
-        }
-
-        var products = store.Products.Values.AsEnumerable();
-        if (!string.IsNullOrWhiteSpace(q))
-        {
-            products = products.Where(x =>
-                x.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
-                x.Description.Contains(q, StringComparison.OrdinalIgnoreCase));
-        }
-
-        return Results.Ok(products.OrderBy(x => x.Name));
+        var list = await repositoryResolver.Repository.ListAsync(q, includeInactive: true, ct);
+        return Results.Ok(list);
     });
 
-    app.MapPost("/products", async (ProductDto request, ProductStore store, CatalogOptions opts, CancellationToken ct) =>
+    app.MapPost("/products", async (ProductDto request, IProductRepositoryResolver repositoryResolver, CancellationToken ct) =>
     {
         if (request.Price < 0)
         {
             return Results.BadRequest(new { error = "Price must be greater than or equal to zero." });
         }
 
-        if (!string.IsNullOrWhiteSpace(opts.ConnectionString))
-        {
-            var created = await PostgresCatalog.CreateAsync(opts.ConnectionString, request, ct);
-            return Results.Created($"/products/{created.ProductId}", created);
-        }
-
-        var product = request with
-        {
-            ProductId = request.ProductId == Guid.Empty ? Guid.NewGuid() : request.ProductId
-        };
-        store.Products[product.ProductId] = product;
-        return Results.Created($"/products/{product.ProductId}", product);
+        var created = await repositoryResolver.Repository.CreateAsync(request, ct);
+        return Results.Created($"/products/{created.ProductId}", created);
     });
 
-    app.MapPut("/products/{productId:guid}", async (Guid productId, ProductDto request, ProductStore store, CatalogOptions opts, CancellationToken ct) =>
+    app.MapPut("/products/{productId:guid}", async (Guid productId, ProductDto request, IProductRepositoryResolver repositoryResolver, CancellationToken ct) =>
     {
         if (request.Price < 0)
         {
             return Results.BadRequest(new { error = "Price must be greater than or equal to zero." });
         }
 
-        if (!string.IsNullOrWhiteSpace(opts.ConnectionString))
-        {
-            var updated = await PostgresCatalog.UpdateAsync(
-                opts.ConnectionString,
-                productId,
-                request with { ProductId = productId },
-                ct);
-            return updated is null ? Results.NotFound() : Results.Ok(updated);
-        }
-
-        if (!store.Products.ContainsKey(productId))
-        {
-            return Results.NotFound();
-        }
-
-        var updatedProduct = request with { ProductId = productId };
-        store.Products[productId] = updatedProduct;
-        return Results.Ok(updatedProduct);
+        var updated = await repositoryResolver.Repository.UpdateAsync(productId, request with { ProductId = productId }, ct);
+        return updated is null ? Results.NotFound() : Results.Ok(updated);
     });
 
-    app.MapDelete("/products/{productId:guid}", async (Guid productId, ProductStore store, CatalogOptions opts, CancellationToken ct) =>
+    app.MapDelete("/products/{productId:guid}", async (Guid productId, IProductRepositoryResolver repositoryResolver, CancellationToken ct) =>
     {
-        if (!string.IsNullOrWhiteSpace(opts.ConnectionString))
-        {
-            var deactivated = await PostgresCatalog.DeactivateAsync(opts.ConnectionString, productId, ct);
-            return deactivated ? Results.NoContent() : Results.NotFound();
-        }
-
-        if (!store.Products.TryGetValue(productId, out var existing))
+        var deactivated = await repositoryResolver.Repository.DeactivateAsync(productId, ct);
+        if (!deactivated)
         {
             return Results.NotFound();
         }
 
-        store.Products[productId] = existing with { IsActive = false };
         return Results.NoContent();
     });
 
@@ -220,21 +155,3 @@ finally
     Log.CloseAndFlush();
 }
 
-internal sealed class CatalogOptions(string? connectionString)
-{
-    public string? ConnectionString { get; set; } = connectionString;
-}
-
-internal sealed class ProductStore
-{
-    public ConcurrentDictionary<Guid, ProductDto> Products { get; } = new(
-        new[]
-        {
-            new KeyValuePair<Guid, ProductDto>(
-                Guid.Parse("11111111-1111-1111-1111-111111111111"),
-                new ProductDto(Guid.Parse("11111111-1111-1111-1111-111111111111"), "Starter Keyboard", "Entry-level keyboard", 39.99m, true)),
-            new KeyValuePair<Guid, ProductDto>(
-                Guid.Parse("22222222-2222-2222-2222-222222222222"),
-                new ProductDto(Guid.Parse("22222222-2222-2222-2222-222222222222"), "Gaming Mouse", "RGB gaming mouse", 59.99m, true))
-        });
-}

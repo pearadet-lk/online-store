@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
@@ -41,8 +40,8 @@ try
             .AddHttpClientInstrumentation()
             .AddOnlineStoreTraceExporters(builder.Configuration));
     builder.Services.AddOpenApi();
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+    builder.Services.AddEndpointsApiExplorer();
+    builder.Services.AddSwaggerGen();
     builder.Services.AddSingleton<PaymentStore>();
 
     var app = builder.Build();
@@ -67,8 +66,8 @@ builder.Services.AddSwaggerGen();
     });
     app.UseSerilogRequestLogging();
     app.UseHttpMetrics();
-app.UseDefaultApiVersioning(DefaultApiVersion);
-app.UseRouting();
+    app.UseDefaultApiVersioning(DefaultApiVersion);
+    app.UseRouting();
 
     app.MapGet("/health", (IConfiguration config) =>
     {
@@ -217,10 +216,3 @@ static string ComputeSha256(string input)
     return Convert.ToHexString(hash);
 }
 
-internal sealed class PaymentStore
-{
-    public ConcurrentDictionary<Guid, PaymentDto> PaymentsByOrderId { get; } = new();
-    public ConcurrentDictionary<string, IdempotencyEntry> IdempotencyResponses { get; } = new();
-}
-
-internal sealed record IdempotencyEntry(string RequestHash, PaymentDto Payment);

@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using Contracts;
 using OpenTelemetry.Resources;
@@ -95,7 +94,3 @@ app.MapGet("/history/users/{userId:guid}", (Guid userId, HistoryStore store) =>
 
 app.Run();
 
-internal sealed class HistoryStore
-{
-    public ConcurrentDictionary<Guid, List<OrderHistoryEventDto>> EventsByUserId { get; } = new();
-}

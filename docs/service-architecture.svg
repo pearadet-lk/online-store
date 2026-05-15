@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 820" font-family="Segoe UI, system-ui, sans-serif">
+  <defs>
+    <marker id="arrowSolid" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#111827"/>
+    </marker>
+    <marker id="arrowTelemetry" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/>
+    </marker>
+    <marker id="arrowEvents" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#b45309"/>
+    </marker>
+  </defs>
+
+  <rect width="100%" height="100%" fill="#fafafa"/>
+  <text x="550" y="36" text-anchor="middle" font-size="22" font-weight="600" fill="#111827">Online store: how services connect</text>
+  <text x="550" y="58" text-anchor="middle" font-size="13" fill="#4b5563">Each legend row uses a different line style (not only different text).</text>
+
+  <!-- Legend: order matches common diagrams; glyphs MUST differ -->
+  <g id="legend" transform="translate(688, 500)">
+    <rect x="0" y="0" width="392" height="248" rx="8" fill="#fff" stroke="#d1d5db" stroke-width="1.5"/>
+    <text x="16" y="28" font-size="14" font-weight="700" fill="#111827">Legend</text>
+    <text x="16" y="46" font-size="10" fill="#6b7280">Icons are not reused across categories.</text>
+
+    <!-- 1: Sync = solid only -->
+    <text x="16" y="68" font-size="10" font-weight="700" fill="#111827">(1) Solid line</text>
+    <line x1="16" y1="78" x2="72" y2="78" stroke="#111827" stroke-width="2.8" marker-end="url(#arrowSolid)"/>
+    <text x="84" y="83" font-size="12" fill="#374151">
+      <tspan font-weight="600" fill="#111827">Synchronous (HTTP / gRPC)</tspan>
+      <tspan x="84" dy="15">Request-response through Gateway; SQL to Postgres.</tspan>
+    </text>
+
+    <!-- 2: Telemetry = long blue dashes (never solid) -->
+    <text x="16" y="128" font-size="10" font-weight="700" fill="#2563eb">(2) Long blue dashes</text>
+    <line x1="16" y1="138" x2="72" y2="138" stroke="#2563eb" stroke-width="2.5" stroke-dasharray="14 6" marker-end="url(#arrowTelemetry)"/>
+    <text x="84" y="143" font-size="12" fill="#374151">
+      <tspan font-weight="600" fill="#2563eb">Telemetry / observability</tspan>
+      <tspan x="84" dy="15">Traces and logs to Jaeger, Zipkin, Elasticsearch.</tspan>
+    </text>
+
+    <!-- 3: Events = short orange dashes (never solid; not same as telemetry) -->
+    <text x="16" y="188" font-size="10" font-weight="700" fill="#b45309">(3) Short orange dashes</text>
+    <line x1="16" y1="198" x2="72" y2="198" stroke="#b45309" stroke-width="2.5" stroke-dasharray="5 5" marker-end="url(#arrowEvents)"/>
+    <text x="84" y="203" font-size="12" fill="#374151">
+      <tspan font-weight="600" fill="#b45309">Asynchronous (events)</tspan>
+      <tspan x="84" dy="15">Kafka publish/consume; not the same arrow as synchronous.</tspan>
+    </text>
+  </g>
+
+  <!-- Clients -->
+  <rect x="380" y="88" width="340" height="44" rx="6" fill="#e0e7ff" stroke="#4338ca" stroke-width="1.5"/>
+  <text x="550" y="116" text-anchor="middle" font-size="13" font-weight="600" fill="#312e81">Clients (browser, API tools, Checkout Simulator)</text>
+
+  <!-- Gateway -->
+  <rect x="400" y="168" width="300" height="48" rx="6" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+  <text x="550" y="198" text-anchor="middle" font-size="15" font-weight="700" fill="#1e3a8a">API Gateway (BFF / reverse proxy)</text>
+
+  <line x1="550" y1="132" x2="550" y2="168" stroke="#111827" stroke-width="2.5" marker-end="url(#arrowSolid)"/>
+  <text x="562" y="154" font-size="11" fill="#111827" font-weight="600">sync</text>
+
+  <!-- Microservices -->
+  <g id="services" font-size="10" fill="#111827">
+    <rect x="40" y="280" width="95" height="36" rx="4" fill="#fff" stroke="#111827"/>
+    <text x="87.5" y="302" text-anchor="middle">User</text>
+    <rect x="145" y="280" width="95" height="36" rx="4" fill="#fff" stroke="#111827"/>
+    <text x="192.5" y="302" text-anchor="middle">Product</text>
+    <rect x="250" y="280" width="95" height="36" rx="4" fill="#fff" stroke="#111827"/>
+    <text x="297.5" y="302" text-anchor="middle">Cart</text>
+    <rect x="355" y="280" width="95" height="36" rx="4" fill="#fff" stroke="#111827"/>
+    <text x="402.5" y="302" text-anchor="middle">Inventory</text>
+    <rect x="460" y="280" width="95" height="36" rx="4" fill="#fff" stroke="#111827"/>
+    <text x="507.5" y="302" text-anchor="middle">Order</text>
+    <rect x="565" y="280" width="95" height="36" rx="4" fill="#fff" stroke="#111827"/>
+    <text x="612.5" y="302" text-anchor="middle">Payment</text>
+    <rect x="670" y="280" width="95" height="36" rx="4" fill="#fff" stroke="#111827"/>
+    <text x="717.5" y="302" text-anchor="middle">Shipping</text>
+    <rect x="775" y="280" width="95" height="36" rx="4" fill="#fff" stroke="#111827"/>
+    <text x="822.5" y="302" text-anchor="middle">History</text>
+    <rect x="880" y="280" width="95" height="36" rx="4" fill="#fff" stroke="#111827"/>
+    <text x="927.5" y="302" text-anchor="middle">Email</text>
+  </g>
+
+  <g stroke="#111827" stroke-width="2" fill="none" marker-end="url(#arrowSolid)">
+    <line x1="470" y1="216" x2="87.5" y2="280"/>
+    <line x1="485" y1="216" x2="192.5" y2="280"/>
+    <line x1="500" y1="216" x2="297.5" y2="280"/>
+    <line x1="515" y1="216" x2="402.5" y2="280"/>
+    <line x1="550" y1="216" x2="507.5" y2="280"/>
+    <line x1="585" y1="216" x2="612.5" y2="280"/>
+    <line x1="600" y1="216" x2="717.5" y2="280"/>
+    <line x1="615" y1="216" x2="822.5" y2="280"/>
+    <line x1="630" y1="216" x2="927.5" y2="280"/>
+  </g>
+  <text x="318" y="252" font-size="11" fill="#111827" font-weight="600">synchronous HTTP (proxied)</text>
+
+  <!-- Postgres -->
+  <path d="M 232.5 400 C 195 400 195 455 232.5 455 C 270 455 270 400 232.5 400 Z" fill="#ecfdf5" stroke="#047857" stroke-width="1.5"/>
+  <ellipse cx="232.5" cy="400" rx="37.5" ry="12" fill="#d1fae5" stroke="#047857"/>
+  <text x="232.5" y="432" text-anchor="middle" font-size="11" font-weight="600" fill="#065f46">PostgreSQL</text>
+
+  <line x1="87.5" y1="316" x2="210" y2="388" stroke="#111827" stroke-width="2" marker-end="url(#arrowSolid)"/>
+  <line x1="192.5" y1="316" x2="232.5" y2="388" stroke="#111827" stroke-width="2" marker-end="url(#arrowSolid)"/>
+  <text x="120" y="360" font-size="10" fill="#111827">sync SQL (User, Product)</text>
+
+  <!-- Kafka -->
+  <rect x="480" y="388" width="140" height="56" rx="6" fill="#fff7ed" stroke="#b45309" stroke-width="2"/>
+  <text x="550" y="415" text-anchor="middle" font-size="13" font-weight="700" fill="#9a3412">Kafka</text>
+  <text x="550" y="432" text-anchor="middle" font-size="10" fill="#78350f">email-notifications topic</text>
+
+  <!-- Events: orange short dashes (matches legend 3) -->
+  <path d="M 420 132 Q 380 320 500 388" stroke="#b45309" stroke-width="2.5" fill="none" stroke-dasharray="5 5" marker-end="url(#arrowEvents)"/>
+  <text x="340" y="290" font-size="11" fill="#b45309" font-weight="600">async publish</text>
+  <text x="340" y="305" font-size="10" fill="#78350f">(simulator to broker)</text>
+
+  <path d="M 620 388 Q 760 340 927.5 316" stroke="#b45309" stroke-width="2.5" fill="none" stroke-dasharray="5 5" marker-end="url(#arrowEvents)"/>
+  <text x="740" y="330" font-size="11" fill="#b45309" font-weight="600">async consume (to Email)</text>
+
+  <text x="550" y="470" text-anchor="middle" font-size="10" fill="#6b7280">Email service: main path is Kafka; HTTP via Gateway is secondary (health, etc.).</text>
+
+  <!-- Observability: blue long dashes (matches legend 2) -->
+  <rect x="40" y="500" width="200" height="70" rx="6" fill="#eff6ff" stroke="#2563eb" stroke-dasharray="14 6" stroke-width="1.5"/>
+  <text x="140" y="525" text-anchor="middle" font-size="12" font-weight="600" fill="#1e40af">Observability</text>
+  <text x="140" y="544" text-anchor="middle" font-size="10" fill="#1e40af">Jaeger, Zipkin, Elasticsearch</text>
+
+  <line x1="400" y1="500" x2="240" y2="535" stroke="#2563eb" stroke-width="2" stroke-dasharray="14 6" marker-end="url(#arrowTelemetry)"/>
+  <line x1="550" y1="216" x2="240" y2="515" stroke="#2563eb" stroke-width="2" stroke-dasharray="14 6" marker-end="url(#arrowTelemetry)"/>
+  <text x="300" y="508" font-size="10" fill="#2563eb">telemetry export</text>
+</svg>

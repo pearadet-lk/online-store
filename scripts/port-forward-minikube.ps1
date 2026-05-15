@@ -22,6 +22,7 @@ $forwards = @(
     @{ Service = "inventory-service"; LocalPort = 5212; RemotePort = 8080 },
     @{ Service = "shipping-service"; LocalPort = 5219; RemotePort = 8080 },
     @{ Service = "history-service"; LocalPort = 5029; RemotePort = 8080 },
+    @{ Service = "postgres"; LocalPort = 55432; RemotePort = 5432 },
     @{ Service = "redis"; LocalPort = 6379; RemotePort = 6379 },
     @{ Service = "jaeger"; LocalPort = 16686; RemotePort = 16686; K8sService = "jaeger" },
     @{ Service = "jaeger-otlp"; LocalPort = 4317; RemotePort = 4317; K8sService = "jaeger" },
@@ -39,6 +40,10 @@ foreach ($f in $forwards) {
         Write-Host ('Skipping {0}: localhost:{1} already in use.' -f $f.Service, $f.LocalPort) -ForegroundColor Yellow
         if ($f.Service -eq 'gateway') {
             Write-Host ('  WARNING: Gateway forward was skipped - checkout-simulator and README URLs use port {0}.' -f $f.LocalPort) -ForegroundColor Red
+            Write-Host '  Fix: stop whatever is listening (or run scripts/stop-port-forward-minikube.ps1), then run this script again.' -ForegroundColor Red
+        }
+        elseif ($f.Service -eq 'postgres') {
+            Write-Host ('  WARNING: Postgres forward was skipped - use localhost:{0} in DBeaver (see README).' -f $f.LocalPort) -ForegroundColor Red
             Write-Host '  Fix: stop whatever is listening (or run scripts/stop-port-forward-minikube.ps1), then run this script again.' -ForegroundColor Red
         }
         continue
@@ -77,6 +82,7 @@ Write-Host ('PID file: {0}' -f $forwardPidJson) -ForegroundColor Green
 Write-Host ''
 Write-Host 'Quick checks:' -ForegroundColor Cyan
 Write-Host '  Gateway health: curl http://localhost:5152/health' -ForegroundColor Cyan
+Write-Host '  PostgreSQL:     localhost:55432 (DBeaver: host localhost, port 55432, db/user/pass onlinestore)' -ForegroundColor Cyan
 Write-Host '  Redis ping:     redis-cli -p 6379 ping' -ForegroundColor Cyan
 Write-Host '  Jaeger UI:      http://localhost:16686' -ForegroundColor Cyan
 Write-Host '  Jaeger OTLP:    localhost:4317 (for host apps e.g. checkout-simulator)' -ForegroundColor Cyan
@@ -95,6 +101,7 @@ Write-Host '  User service         http://localhost:5121' -ForegroundColor White
 Write-Host '  Inventory service    http://localhost:5212' -ForegroundColor White
 Write-Host '  Shipping service     http://localhost:5219' -ForegroundColor White
 Write-Host '  History service      http://localhost:5029' -ForegroundColor White
+Write-Host '  PostgreSQL           localhost:55432 -> in-cluster :5432 (avoids clash with Docker Compose on 5432)' -ForegroundColor White
 Write-Host '  Redis                localhost:6379' -ForegroundColor White
 Write-Host '  Jaeger UI            http://localhost:16686' -ForegroundColor White
 Write-Host '  Jaeger OTLP (gRPC)   localhost:4317' -ForegroundColor White

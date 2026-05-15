@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using Contracts;
 using OpenTelemetry.Resources;
@@ -88,7 +87,3 @@ app.MapGet("/shipments/{orderId:guid}", (Guid orderId, ShipmentStore store) =>
 
 app.Run();
 
-internal sealed class ShipmentStore
-{
-    public ConcurrentDictionary<Guid, ShipmentDto> ShipmentsByOrderId { get; } = new();
-}

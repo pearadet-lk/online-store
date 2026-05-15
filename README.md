@@ -43,7 +43,7 @@ dotnet run --project tools/CheckoutSimulator/CheckoutSimulator.csproj
 
 Default simulator settings target **Docker Compose** (gateway **`localhost:8081`**, OTLP **`4317`**, Kafka on). For **Minikube**, gateway traffic is **`localhost:5152`** after port-forward — use `.\scripts\run-checkout-simulator-minikube.ps1` or set `DOTNET_ENVIRONMENT=Minikube` so `appsettings.Minikube.json` applies. To flip stacks **without editing files**, set **`Gateway__BaseUrl`** (and for Minikube typically **`Simulator__PublishKafka=false`**). Details: [tools/CheckoutSimulator/README.md](tools/CheckoutSimulator/README.md#docker-compose-vs-minikube).
 
-**Minikube:** after `.\scripts\deploy-minikube.ps1` (or `make deploy-minikube`), port-forwards include gateway **5152** and Jaeger OTLP **4317**. The Minikube manifest set does not include Kafka, so the simulator disables Kafka publish unless you override `Simulator__PublishKafka`.
+**Minikube:** after `.\scripts\deploy-minikube.ps1` (or `make deploy-minikube`), port-forwards include gateway **5152**, PostgreSQL **55432** (for DBeaver), and Jaeger OTLP **4317**. The Minikube manifest set does not include Kafka, so the simulator disables Kafka publish unless you override `Simulator__PublishKafka`.
 
 ```powershell
 .\scripts\run-checkout-simulator-minikube.ps1
@@ -362,8 +362,9 @@ This script:
 - builds all service images into Minikube Docker daemon
 - applies `k8s/minikube-all-in-one.yaml`
 - applies `k8s/minikube-monitoring.yaml` (Jaeger, Prometheus, Grafana, Elasticsearch, Kibana)
-- waits for deployments to become ready
-- prints gateway URL
+- waits for deployments to become ready (`postgres` and `redis` first, then the rest)
+- runs **`scripts/port-forward-minikube.ps1`** (gateway **5152**, direct service ports, **PostgreSQL `localhost:55432`**, Redis, observability)
+- prints gateway URL and a PostgreSQL / DBeaver hint
 
 Manual deploy alternative:
 
@@ -400,6 +401,7 @@ Deploy waits: **Elasticsearch** and **Kibana** rollouts allow **420s**; other de
 | **Gateway**             | **NodePort** `30081` on the Minikube node: `http://<minikube-ip>:30081` (`minikube ip`). Or open a tunnel and print a URL: `minikube service gateway -n online-store --url` |
 | **Other microservices** | **ClusterIP only** (no NodePort). Call them through the gateway, or use port-forward (examples below).                                                                      |
 | **Redis**               | ClusterIP only; use port-forward if you need it from the host.                                                                                                              |
+| **PostgreSQL**          | ClusterIP only; **`make port-forward-minikube`** (or **`make port-forward-dockerdesktop-k8s`**) forwards **`localhost:55432`** to the in-cluster DB (see [PostgreSQL from the host (DBeaver)](#postgresql-from-the-host-dbeaver)). |
 | **Jaeger / Prometheus / Grafana / ELK** | ClusterIP only; use port-forward for local browser access. |
 
 
@@ -436,6 +438,7 @@ These are the URLs when every forward starts successfully (the script skips any 
 | Inventory service | `http://localhost:5212` |
 | Shipping service | `http://localhost:5219` |
 | History service | `http://localhost:5029` |
+| PostgreSQL | `localhost:55432` (maps to in-cluster `5432`; use this port in DBeaver so it does not clash with Docker Compose on `5432`) |
 | Redis | `localhost:6379` |
 | Jaeger UI | `http://localhost:16686` |
 | Jaeger OTLP (gRPC; host tools / checkout-simulator) | `localhost:4317` |
@@ -459,6 +462,7 @@ kubectl port-forward -n online-store svc/user-service 5121:8080
 kubectl port-forward -n online-store svc/inventory-service 5212:8080
 kubectl port-forward -n online-store svc/shipping-service 5219:8080
 kubectl port-forward -n online-store svc/history-service 5029:8080
+kubectl port-forward -n online-store svc/postgres 55432:5432
 kubectl port-forward -n online-store svc/redis 6379:6379
 kubectl port-forward -n online-store svc/jaeger 16686:16686
 kubectl port-forward -n online-store svc/jaeger 4317:4317
@@ -486,7 +490,21 @@ For Angular, either keep the port-forward to `5152:8080` above, or change `src/f
 - Kafka broker + EmailService deployment are not in `k8s/minikube-all-in-one.yaml` yet.
 - Production manifests under `k8s/production/` are separate and not used by `deploy-minikube.ps1`.
 
-**Optional:** pick different local ports by editing **`scripts/port-forward-minikube.ps1`** or running your own `kubectl port-forward` mappings.
+### PostgreSQL from the host (DBeaver)
+
+After **`make port-forward-minikube`** or **`make port-forward-dockerdesktop-k8s`** (or **`.\scripts\port-forward-minikube.ps1`** / **`.\scripts\port-forward-dockerdesktop-k8s.ps1`**), connect from DBeaver or any SQL client:
+
+| Field | Value |
+| ----- | ----- |
+| Host | `localhost` |
+| Port | **`55432`** (local side of the forward; avoids conflicting with Docker Compose PostgreSQL on **`5432`**) |
+| Database | `onlinestore` |
+| Username | `onlinestore` |
+| Password | `onlinestore` |
+
+The Minikube / Kubernetes manifest does **not** run `database/aurora-postgres-schema.sql` on first start (unlike Docker Compose). If the database is empty, open **`database/aurora-postgres-schema.sql`** in DBeaver and execute it once against this connection.
+
+**Optional:** pick different local ports by editing **`scripts/port-forward-minikube.ps1`** (or **`scripts/port-forward-dockerdesktop-k8s.ps1`**) or running your own `kubectl port-forward` mappings.
 
 Stop/cleanup:
 
@@ -533,8 +551,8 @@ This script:
 - builds all service images into your normal Docker daemon
 - applies `k8s/minikube-all-in-one.yaml`
 - applies `k8s/minikube-monitoring.yaml` (Jaeger, Prometheus, Grafana, Elasticsearch, Kibana)
-- waits for deployments to become ready
-- starts port-forwards automatically
+- waits for deployments to become ready (`postgres` and `redis` first, then the rest)
+- starts **`scripts/port-forward-dockerdesktop-k8s.ps1`** automatically (same localhost map as Minikube, including **PostgreSQL `localhost:55432`** — see [PostgreSQL from the host (DBeaver)](#postgresql-from-the-host-dbeaver))
 
 Final gateway URL after deploy:
 
@@ -543,6 +561,8 @@ Final gateway URL after deploy:
 **Checkout checklist:** if **`5152` refuses connections**, run **`make stop-port-forward-dockerdesktop-k8s`** then **`make port-forward-dockerdesktop-k8s`**, or **`make restart-port-forward-dockerdesktop-k8s`**. Confirm **`curl http://localhost:5152/health`**. Deploy uses **420s** rollout timeouts for Elasticsearch and Kibana, **240s** for other workloads.
 
 **Checkout simulator:** **`make run-checkout-simulator-dockerdesktop-k8s`** (alias of **`make run-checkout-simulator-minikube`**) — same **`localhost:5152`** / **`4317`** mapping as **`scripts/port-forward-dockerdesktop-k8s.ps1`**. Uses **`appsettings.Minikube.json`** only as a *host port profile* name; it applies to Docker Desktop Kubernetes too. Kafka stays off (manifest has no broker); gateway must include the **`ReverseProxy` env-after-JSON fix** in **`Gateway/Program.cs`** — rebuild images with **`deploy-dockerdesktop-k8s`** after pulling latest sources.
+
+**PostgreSQL / DBeaver:** **`make port-forward-dockerdesktop-k8s`** also forwards **`localhost:55432`** to the cluster database; use the same connection settings as in [PostgreSQL from the host (DBeaver)](#postgresql-from-the-host-dbeaver).
 
 Stop/cleanup:
 

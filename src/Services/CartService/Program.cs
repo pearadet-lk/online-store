@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Diagnostics;
 using Contracts;
 using OpenTelemetry.Resources;
@@ -100,7 +99,3 @@ app.MapDelete("/carts/{userId:guid}", (Guid userId, CartStore store) =>
 
 app.Run();
 
-internal sealed class CartStore
-{
-    public ConcurrentDictionary<Guid, CartDto> CartByUserId { get; } = new();
-}

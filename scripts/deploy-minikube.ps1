@@ -29,6 +29,8 @@ kubectl apply -f k8s/minikube-all-in-one.yaml
 kubectl apply -f k8s/minikube-monitoring.yaml
 
 $deployments = @(
+    "postgres",
+    "redis",
     "gateway",
     "product-service",
     "cart-service",
@@ -61,11 +63,12 @@ Write-Host "Starting all Minikube port-forwards..." -ForegroundColor Cyan
 
 Write-Host "Minikube deployment completed." -ForegroundColor Green
 Write-Host "Primary API URL: http://localhost:5152 (gateway)" -ForegroundColor Green
+Write-Host "PostgreSQL (DBeaver / SQL clients): localhost:55432 (db/user/pass: onlinestore) — see README." -ForegroundColor Green
 Write-Host "(Final localhost URLs also printed above by port-forward-minikube.ps1.)" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "Note: k8s/minikube-all-in-one.yaml does not deploy the React/Angular/Vue apps." -ForegroundColor Yellow
 Write-Host "  - Start a UI locally (see README Frontend apps)." -ForegroundColor Yellow
-Write-Host "  - Port-forwards are started automatically for gateway/services." -ForegroundColor Yellow
+Write-Host "  - Port-forwards are started automatically for gateway, services, postgres, and redis." -ForegroundColor Yellow
 Write-Host "  - Frontend dev proxies can use http://localhost:5152" -ForegroundColor Yellow
 Write-Host "  - Kafka and EmailService are not included in Minikube manifests yet." -ForegroundColor Yellow
 Write-Host "  - Run checkout simulator: .\scripts\run-checkout-simulator-minikube.ps1 (HTTP + Jaeger; Kafka off unless you add a broker)." -ForegroundColor Yellow

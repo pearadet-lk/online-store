@@ -1,11 +1,93 @@
+using System.Collections.Concurrent;
 using Contracts;
 using Npgsql;
 
 namespace ProductService;
 
-internal static class PostgresCatalog
+internal interface IProductRepository
 {
-    public static async Task EnsureSchemaAndSeedAsync(string connectionString, CancellationToken ct)
+    Task<IReadOnlyList<ProductDto>> ListAsync(string? q, bool includeInactive, CancellationToken ct);
+    Task<ProductDto?> GetByIdAsync(Guid productId, bool includeInactive, CancellationToken ct);
+    Task<ProductDto> CreateAsync(ProductDto input, CancellationToken ct);
+    Task<ProductDto?> UpdateAsync(Guid productId, ProductDto input, CancellationToken ct);
+    Task<bool> DeactivateAsync(Guid productId, CancellationToken ct);
+}
+
+internal sealed class InMemoryProductRepository : IProductRepository
+{
+    private readonly ConcurrentDictionary<Guid, ProductDto> _products = new(
+        CatalogSeed.DefaultProducts().ToDictionary(p => p.ProductId));
+
+    public Task<IReadOnlyList<ProductDto>> ListAsync(string? q, bool includeInactive, CancellationToken ct)
+    {
+        var products = _products.Values.AsEnumerable();
+        if (!includeInactive)
+        {
+            products = products.Where(x => x.IsActive);
+        }
+
+        if (!string.IsNullOrWhiteSpace(q))
+        {
+            products = products.Where(x =>
+                x.Name.Contains(q, StringComparison.OrdinalIgnoreCase) ||
+                x.Description.Contains(q, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return Task.FromResult<IReadOnlyList<ProductDto>>(products.OrderBy(x => x.Name).ToList());
+    }
+
+    public Task<ProductDto?> GetByIdAsync(Guid productId, bool includeInactive, CancellationToken ct)
+    {
+        if (!_products.TryGetValue(productId, out var product))
+        {
+            return Task.FromResult<ProductDto?>(null);
+        }
+
+        if (!includeInactive && !product.IsActive)
+        {
+            return Task.FromResult<ProductDto?>(null);
+        }
+
+        return Task.FromResult<ProductDto?>(product);
+    }
+
+    public Task<ProductDto> CreateAsync(ProductDto input, CancellationToken ct)
+    {
+        var product = input with
+        {
+            ProductId = input.ProductId == Guid.Empty ? Guid.NewGuid() : input.ProductId
+        };
+        _products[product.ProductId] = product;
+        return Task.FromResult(product);
+    }
+
+    public Task<ProductDto?> UpdateAsync(Guid productId, ProductDto input, CancellationToken ct)
+    {
+        if (!_products.ContainsKey(productId))
+        {
+            return Task.FromResult<ProductDto?>(null);
+        }
+
+        var updated = input with { ProductId = productId };
+        _products[productId] = updated;
+        return Task.FromResult<ProductDto?>(updated);
+    }
+
+    public Task<bool> DeactivateAsync(Guid productId, CancellationToken ct)
+    {
+        if (!_products.TryGetValue(productId, out var existing))
+        {
+            return Task.FromResult(false);
+        }
+
+        _products[productId] = existing with { IsActive = false };
+        return Task.FromResult(true);
+    }
+}
+
+internal sealed class PostgresProductRepository(string connectionString) : IProductRepository
+{
+    public async Task EnsureSchemaAndSeedAsync(CancellationToken ct)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
@@ -41,7 +123,7 @@ internal static class PostgresCatalog
                 updated_at = NOW();
             """;
 
-        foreach (var p in DefaultProducts())
+        foreach (var p in CatalogSeed.DefaultProducts())
         {
             await using var cmd = new NpgsqlCommand(upsert, conn);
             cmd.Parameters.AddWithValue("id", p.ProductId);
@@ -53,10 +135,7 @@ internal static class PostgresCatalog
         }
     }
 
-    public static async Task<IReadOnlyList<ProductDto>> ListAsync(string connectionString, string? q, CancellationToken ct)
-        => await ListAsync(connectionString, q, includeInactive: false, ct);
-
-    public static async Task<IReadOnlyList<ProductDto>> ListAsync(string connectionString, string? q, bool includeInactive, CancellationToken ct)
+    public async Task<IReadOnlyList<ProductDto>> ListAsync(string? q, bool includeInactive, CancellationToken ct)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
@@ -96,7 +175,7 @@ internal static class PostgresCatalog
         return list;
     }
 
-    public static async Task<ProductDto?> GetByIdAsync(string connectionString, Guid productId, bool includeInactive, CancellationToken ct)
+    public async Task<ProductDto?> GetByIdAsync(Guid productId, bool includeInactive, CancellationToken ct)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
@@ -127,7 +206,7 @@ internal static class PostgresCatalog
             reader.GetBoolean(4));
     }
 
-    public static async Task<ProductDto> CreateAsync(string connectionString, ProductDto input, CancellationToken ct)
+    public async Task<ProductDto> CreateAsync(ProductDto input, CancellationToken ct)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
@@ -157,7 +236,7 @@ internal static class PostgresCatalog
             reader.GetBoolean(4));
     }
 
-    public static async Task<ProductDto?> UpdateAsync(string connectionString, Guid productId, ProductDto input, CancellationToken ct)
+    public async Task<ProductDto?> UpdateAsync(Guid productId, ProductDto input, CancellationToken ct)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
@@ -194,7 +273,7 @@ internal static class PostgresCatalog
             reader.GetBoolean(4));
     }
 
-    public static async Task<bool> DeactivateAsync(string connectionString, Guid productId, CancellationToken ct)
+    public async Task<bool> DeactivateAsync(Guid productId, CancellationToken ct)
     {
         await using var conn = new NpgsqlConnection(connectionString);
         await conn.OpenAsync(ct);
@@ -210,21 +289,5 @@ internal static class PostgresCatalog
         cmd.Parameters.AddWithValue("id", productId);
         var affected = await cmd.ExecuteNonQueryAsync(ct);
         return affected > 0;
-    }
-
-    private static IEnumerable<ProductDto> DefaultProducts()
-    {
-        yield return new ProductDto(
-            Guid.Parse("11111111-1111-1111-1111-111111111111"),
-            "Starter Keyboard",
-            "Entry-level keyboard",
-            39.99m,
-            true);
-        yield return new ProductDto(
-            Guid.Parse("22222222-2222-2222-2222-222222222222"),
-            "Gaming Mouse",
-            "RGB gaming mouse",
-            59.99m,
-            true);
     }
 }

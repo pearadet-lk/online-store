@@ -34,6 +34,8 @@ kubectl apply -f k8s/minikube-all-in-one.yaml
 kubectl apply -f k8s/minikube-monitoring.yaml
 
 $deployments = @(
+    "postgres",
+    "redis",
     "gateway",
     "product-service",
     "cart-service",
@@ -67,10 +69,11 @@ Write-Host "Starting Docker Desktop Kubernetes port-forwards..." -ForegroundColo
 $gatewayUrl = "http://localhost:5152"
 Write-Host "Docker Desktop Kubernetes deployment completed." -ForegroundColor Green
 Write-Host "Gateway URL: $gatewayUrl" -ForegroundColor Green
+Write-Host "PostgreSQL (DBeaver / SQL clients): localhost:55432 (db/user/pass: onlinestore) — see README." -ForegroundColor Green
 Write-Host ""
 Write-Host "Note: k8s/minikube-all-in-one.yaml does not deploy the React/Angular/Vue apps." -ForegroundColor Yellow
 Write-Host "  - Start a UI locally (see README Frontend apps)." -ForegroundColor Yellow
-Write-Host "  - Port-forwards are started automatically for gateway/services." -ForegroundColor Yellow
+Write-Host "  - Port-forwards are started automatically for gateway, services, postgres, and redis." -ForegroundColor Yellow
 Write-Host "  - Frontend dev proxies can use http://localhost:5152" -ForegroundColor Yellow
 Write-Host "  - Kafka and EmailService are not included in this Kubernetes manifest yet." -ForegroundColor Yellow
 Write-Host "  - Tunnel-only refresh: make restart-port-forward-dockerdesktop-k8s (if localhost:5152 refuses)." -ForegroundColor Yellow

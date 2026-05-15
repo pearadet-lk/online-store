@@ -37,6 +37,13 @@ function newIdempotencyKey(): string {
   return `checkout-${Date.now()}`;
 }
 
+function newProductId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `product-${Date.now()}`;
+}
+
 export default function App() {
   const [loginEmail, setLoginEmail] = useState("demo@example.com");
   const [loginPassword, setLoginPassword] = useState("demo-password");
@@ -56,6 +63,14 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [checkoutResult, setCheckoutResult] = useState<unknown>(null);
   const [checkoutBusy, setCheckoutBusy] = useState(false);
+  const [isAdminView, setIsAdminView] = useState(false);
+  const [adminProducts, setAdminProducts] = useState<Product[]>([]);
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [newProductName, setNewProductName] = useState("");
+  const [newProductDescription, setNewProductDescription] = useState("");
+  const [newProductPrice, setNewProductPrice] = useState("0");
+  const [adminMessage, setAdminMessage] = useState<string | null>(null);
+  const [createBusy, setCreateBusy] = useState(false);
 
   useEffect(() => {
     try {
@@ -221,9 +236,33 @@ export default function App() {
     }
   }, [authenticatedFetch]);
 
+  const loadAdminProducts = useCallback(async () => {
+    setAdminLoading(true);
+    setError(null);
+    try {
+      const res = await authenticatedFetch("/api/admin/products");
+      if (!res.ok) {
+        throw new Error(`Admin products failed: ${res.status}`);
+      }
+      const data: Product[] = await res.json();
+      setAdminProducts(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load admin products");
+    } finally {
+      setAdminLoading(false);
+    }
+  }, [authenticatedFetch]);
+
   useEffect(() => {
     void loadProducts();
   }, [loadProducts]);
+
+  useEffect(() => {
+    if (!isAdminView) {
+      return;
+    }
+    void loadAdminProducts();
+  }, [isAdminView, loadAdminProducts]);
 
   const persistCart = useCallback(async (items: CartItem[]) => {
     if (!currentUser?.userId) {
@@ -315,6 +354,55 @@ export default function App() {
     [cart],
   );
 
+  const createProduct = useCallback(async () => {
+    setCreateBusy(true);
+    setError(null);
+    setAdminMessage(null);
+    try {
+      const parsedPrice = Number.parseFloat(newProductPrice);
+      if (!Number.isFinite(parsedPrice) || parsedPrice < 0) {
+        throw new Error("Price must be a non-negative number.");
+      }
+      if (!newProductName.trim()) {
+        throw new Error("Product name is required.");
+      }
+
+      const res = await authenticatedFetch("/api/products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          productId: newProductId(),
+          name: newProductName.trim(),
+          description: newProductDescription.trim(),
+          price: parsedPrice,
+          isActive: true,
+        }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(body.error || `Create product failed: ${res.status}`);
+      }
+
+      setAdminMessage("Product created successfully.");
+      setNewProductName("");
+      setNewProductDescription("");
+      setNewProductPrice("0");
+      await loadAdminProducts();
+      await loadProducts();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Create product failed");
+    } finally {
+      setCreateBusy(false);
+    }
+  }, [
+    authenticatedFetch,
+    loadAdminProducts,
+    loadProducts,
+    newProductDescription,
+    newProductName,
+    newProductPrice,
+  ]);
+
   return (
     <main>
       <h1>Online Store (React → HTTPS → Gateway)</h1>
@@ -324,6 +412,17 @@ export default function App() {
       </p>
 
       {error ? <p className="error">{error}</p> : null}
+      <section>
+        <h2 style={{ marginTop: 0 }}>Page mode</h2>
+        <div className="row-actions">
+          <button type="button" disabled={!isAdminView} onClick={() => setIsAdminView(false)}>
+            User view (catalog)
+          </button>
+          <button type="button" disabled={isAdminView} onClick={() => setIsAdminView(true)}>
+            Admin view (manage products)
+          </button>
+        </div>
+      </section>
 
       <section>
         <h2 style={{ marginTop: 0 }}>Login</h2>
@@ -377,25 +476,75 @@ export default function App() {
         </div>
       </section>
 
-      <section>
-        <h2 style={{ marginTop: 0 }}>Catalog</h2>
-        {loading ? (
-          <p>Loading…</p>
-        ) : (
-          <ul>
-            {products.map((p) => (
-              <li key={p.productId}>
-                <span>
-                  <strong>{p.name}</strong> — ${p.price.toFixed(2)}
-                </span>
-                <button type="button" onClick={() => void addToCart(p)}>
-                  Add to cart
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      {isAdminView ? (
+        <section>
+          <h2 style={{ marginTop: 0 }}>Admin - add product</h2>
+          {!authToken ? <p>Login required to create products.</p> : null}
+          {adminMessage ? <p className="message">{adminMessage}</p> : null}
+          <div className="form-grid">
+            <label>
+              Product name
+              <input type="text" value={newProductName} onChange={(e) => setNewProductName(e.target.value)} />
+            </label>
+            <label>
+              Description
+              <input
+                type="text"
+                value={newProductDescription}
+                onChange={(e) => setNewProductDescription(e.target.value)}
+              />
+            </label>
+            <label>
+              Price
+              <input type="number" min="0" step="0.01" value={newProductPrice} onChange={(e) => setNewProductPrice(e.target.value)} />
+            </label>
+            <div className="row-actions">
+              <button type="button" disabled={createBusy || !authToken} onClick={() => void createProduct()}>
+                {createBusy ? "Saving..." : "Add product"}
+              </button>
+              <button type="button" onClick={() => void loadAdminProducts()} disabled={adminLoading}>
+                Refresh list
+              </button>
+            </div>
+          </div>
+
+          <h3>Admin product list</h3>
+          {adminLoading ? (
+            <p>Loading…</p>
+          ) : (
+            <ul>
+              {adminProducts.map((p) => (
+                <li key={p.productId}>
+                  <span>
+                    <strong>{p.name}</strong> — ${p.price.toFixed(2)} {!p.isActive ? "(inactive)" : ""}
+                  </span>
+                  <span>{p.productId}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : (
+        <section>
+          <h2 style={{ marginTop: 0 }}>User - view products</h2>
+          {loading ? (
+            <p>Loading…</p>
+          ) : (
+            <ul>
+              {products.map((p) => (
+                <li key={p.productId}>
+                  <span>
+                    <strong>{p.name}</strong> — ${p.price.toFixed(2)}
+                  </span>
+                  <button type="button" onClick={() => void addToCart(p)}>
+                    Add to cart
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
       <section>
         <h2 style={{ marginTop: 0 }}>Cart</h2>
